@@ -3,6 +3,7 @@
   --muted: #7f8c9b;
   --hairline: #dde4ec;
   --accent: #4f93dc;
+  --notice: #b35900;
   --surface: rgba(255, 255, 255, 0.96);
   --shadow: 0 18px 50px -20px rgba(40, 70, 110, 0.22);
   font-family: 'Inter Variable', system-ui, sans-serif;
@@ -593,4 +594,101 @@ dd {
   font: inherit;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+}
+
+.text-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  resize: vertical;
+}
+
+textarea.text-input {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+}
+
+.rle {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.note.notice {
+  padding: 8px 10px;
+  border-left: 2px solid var(--notice);
+  border-radius: 2px;
+  background: rgba(179, 89, 0, 0.08);
+  color: var(--notice);
+}
+
+.table-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.table-rows li::marker {
+  color: var(--muted);
+}
+
+.state {
+  white-space: nowrap;
+}
+
+.swatch {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 3px;
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px rgba(25, 38, 54, 0.3);
+}
+
+/* The field's shades: ink over paper at the coverage of each state's cell byte. */
+.swatch-0 {
+  background: #fff;
+}
+
+.swatch-1 {
+  background: var(--ink);
+}
+
+.swatch-2 {
+  background: color-mix(in srgb, var(--ink) 59%, #fff);
+}
+
+.swatch-3 {
+  background: color-mix(in srgb, var(--ink) 35%, #fff);
+}
+
+.return-rule {
+  align-self: flex-start;
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 12px;
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  transition: color 0.15s, background 0.15s;
+}
+
+.return-rule:hover {
+  background: var(--accent);
+  color: #fff;
 }

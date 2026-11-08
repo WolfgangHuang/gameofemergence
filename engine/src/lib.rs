@@ -159,6 +159,12 @@ pub unsafe extern "C" fn world_status_since(w: *const World) -> f64 {
     unsafe { (*w).detector.since as f64 }
 }
 
+/// All live cells as x, y pairs, twice the population in i32 values.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn world_export(w: *mut World) -> *const i32 {
+    unsafe { (*w).export_cells() }.as_ptr()
+}
+
 /// Writes x0, y0, x1, y1 to the scratch buffer and returns it, or null when empty.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn world_bounds(w: *mut World) -> *const i32 {

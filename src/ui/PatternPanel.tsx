@@ -16,6 +16,7 @@ function Thumbnail({ shape }: { shape: Shape }) {
 export function HatPatternPanel(props: { selected: string | null; onSelect: (pattern: HatPattern) => void }) {
   return (
     <>
+      <p className="note notice">Patterns for Einstein tiles require extended rulesets that are more complex than the original B/S rules.</p>
       <p className="note">Click to pick up, click the field to place. Most starting points launch one or two gliders, along one of six directions. Esc ends. Picking one switches to its own rule.</p>
       <div className="pattern-group">
         <span className="caption">Spaceships</span>

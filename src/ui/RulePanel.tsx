@@ -1,7 +1,4 @@
-export interface Rule {
-  birth: number;
-  survive: number;
-}
+import { parseRule, ruleName, type Rule } from '../patterns/rule';
 
 const NAMES: Record<string, string> = {
   'B3/S23': 'Conway',
@@ -13,22 +10,6 @@ const NAMES: Record<string, string> = {
   'B1357/S1357': 'Replicator',
   'B4678/S35678': 'Anneal',
 };
-
-/** Counts above nine are written as hexadecimal digits. */
-export function parseRule(text: string): Rule {
-  const [, born, survives] = /^B(\w*)\/S(\w*)$/.exec(text)!;
-  const bits = (digits: string) => [...digits].reduce((mask, digit) => mask | (1 << parseInt(digit, 16)), 0);
-  return { birth: bits(born), survive: bits(survives) };
-}
-
-export function ruleName({ birth, survive }: Rule) {
-  const digits = (bits: number) => {
-    let text = '';
-    for (let n = 0; n < 16; n++) if ((bits >> n) & 1) text += n.toString(16);
-    return text;
-  };
-  return `B${digits(birth)}/S${digits(survive)}`;
-}
 
 function Counts(props: { label: string; bits: number; count: number; disabled?: number; onToggle: (count: number) => void }) {
   const counts = Array.from({ length: props.count + 1 }, (_, n) => n);

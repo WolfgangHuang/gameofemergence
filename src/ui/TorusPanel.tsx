@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import type { TorusSize } from '../sim/protocol';
+import { MAX_TORUS_SIDE, MIN_TORUS_SIDE } from '../tiles/tiles';
 
 const SIZES = [64, 128, 256, 512, 1024, 2048, 4096];
 export const DEFAULT_TORUS: TorusSize = { width: 128, height: 128 };
-const MIN_SIDE = 8;
-const MAX_SIDE = 4096;
+const MIN_SIDE = MIN_TORUS_SIDE;
+const MAX_SIDE = MAX_TORUS_SIDE;
 
-/** Odd sides would not let the tiles of most families fit together across the seam. */
 function validSide(value: number, fallback: number) {
   if (!Number.isFinite(value)) return fallback;
   return Math.min(MAX_SIDE, Math.max(MIN_SIDE, Math.round(value / 2) * 2));

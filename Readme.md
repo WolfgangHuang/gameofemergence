@@ -10,8 +10,10 @@ Conways „Game of Life“ im Browser, auf einem unbegrenzten Feld und auf viele
 - **Live verformbar:** Die Ecken einer Kachel lassen sich ziehen, auch während die Simulation läuft. Die Einstein-Kacheln morphen stufenlos zwischen Comet, Turtle, Spectre-Form, Hat und Chevron.
 - **Regeln frei einstellbar:** Geburt und Überleben pro Nachbarzahl, dazu passende Vorlagen je Kachelform. Die Nachbarschaft ist wählbar, also nur über Kanten oder auch über Ecken. Auf dem Torus ist auch Geburt bei 0 Nachbarn möglich.
 - **Zeichnen:** Pinsel in 12 Größen, Radierer, Zufallsfeld mit einstellbarer Dichte.
-- **Musterbibliothek:** 24 bekannte Muster, darunter Glider, Spaceships, Gosper Gun und Acorn, mit Vorschau am Mauszeiger. Sie gilt für Vierecke mit 8 Nachbarn. Dazu kommt ein Glider für die Hat-Kachelung, der seine eigene 4-Zustands-Regel mitbringt.
+- **Musterbibliothek:** 24 bekannte Muster, darunter Glider, Spaceships, Gosper Gun und Acorn, mit Vorschau am Mauszeiger. Sie gilt für Vierecke mit 8 Nachbarn. Dazu kommt ein Glider für die Hat-Kachelung, der eine erweiterte 4-Zustands-Regel mitbringt. Solange sie aktiv ist, erklärt das Rule-Panel sie Zeile für Zeile und blendet die B/S-Regler aus; ein Knopf führt zurück zur Grundregel.
 - **Statuserkennung:** Zeigt an, ob ein Feld ausgestorben oder statisch ist, oszilliert, nur noch Spaceships ausschickt oder stetig wächst. Auf dem Torus nennt sie die volle Periode, etwa den Umlauf eines Gliders. Auf Wunsch pausiert die Simulation dann automatisch.
+- **Teilen per Link:** Ein Link enthält Kachelform, Regel, Ansicht und Zellen. Es gibt keinen Server, alles steckt im Link selbst. Bei sehr vielen Zellen sagt die Seite, was der Link stattdessen enthält.
+- **RLE-Import und -Export:** Muster aus dem LifeWiki oder aus Golly einfügen und das Feld als RLE-Text kopieren, für Vierecke mit 8 Nachbarn.
 - **Nachglühen:** Eine einstellbare Spur, wo eben noch Zellen lebten.
 
 ## Bedienung
@@ -27,6 +29,8 @@ Conways „Game of Life“ im Browser, auf einem unbegrenzten Feld und auf viele
 | `R` / `F` / `Esc` | Muster drehen / spiegeln / Platzieren beenden |
 
 Das Mausrad zoomt. Verschieben geht auch mit rechter oder mittlerer Maustaste oder mit gedrückter Shift-Taste.
+
+Links und RLE findest du im Abschnitt **Share & export**. Geöffnete Links starten pausiert bei Generation 0.
 
 Den Torus und seine Größe stellst du im Abschnitt **Field** ein. Die Seiten sind gerade Zahlen von 8 bis 4096. Ebene und Torus behalten beim Wechsel jeweils ihre Zellen.
 

@@ -527,6 +527,23 @@ impl World {
         self.observe();
     }
 
+    /// Writes all live cells to the scratch buffer as x, y pairs.
+    pub fn export_cells(&mut self) -> &[i32] {
+        self.scratch.clear();
+        for c in self.chunks.iter().filter(|c| c.pop > 0) {
+            for (y, &row) in c.rows().iter().enumerate() {
+                let wy = c.key.1 * SIZE as i32 + y as i32;
+                let mut bits = row;
+                while bits != 0 {
+                    self.scratch.push(c.key.0 * SIZE as i32 + bits.trailing_zeros() as i32);
+                    self.scratch.push(wy);
+                    bits &= bits - 1;
+                }
+            }
+        }
+        &self.scratch
+    }
+
     /// Bounding box of all live cells as (x0, y0, x1, y1), if there are any.
     pub fn bounds(&self) -> Option<(i32, i32, i32, i32)> {
         let mut bounds = None;
@@ -1247,6 +1264,20 @@ mod tests {
         let f = w.frame(0, 0, 35, 33, 1).to_vec();
         let live = f.iter().filter(|&&v| v > 0).count();
         assert_eq!((live, f[34], f[32 * 35]), (2, 63, 63));
+    }
+
+    #[test]
+    fn export_lists_exactly_the_live_cells() {
+        // On a torus this must include no ghosts, even right after a step.
+        let mut w = World::new();
+        assert!(w.set_torus(70, 66));
+        w.soup(0, 0, 70, 66, 0.3, 99);
+        w.step();
+        let expected = torus_cells(&w);
+        let pairs = w.export_cells().to_vec();
+        assert_eq!(pairs.len(), expected.len() * 2);
+        let listed: Cells = pairs.chunks_exact(2).map(|p| (p[0], p[1])).collect();
+        assert_eq!(listed, expected);
     }
 
     #[test]

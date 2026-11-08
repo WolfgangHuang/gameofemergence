@@ -13,6 +13,7 @@ interface Exports {
   world_paint(w: number, n: number, alive: number): void;
   world_soup(w: number, x: number, y: number, width: number, height: number, density: number, seed: number): void;
   world_frame(w: number, ox: number, oy: number, width: number, height: number, level: number): number;
+  world_export(w: number): number;
   world_generation(w: number): number;
   world_population(w: number): number;
   world_status_kind(w: number): number;
@@ -247,6 +248,16 @@ function handle(m: ToWorker) {
       e.hat_soup(hat, m.x, m.y, m.radius, m.density, m.seed);
       version++;
       break;
+    case 'exportCells': {
+      const { generation, population } = stats();
+      let cells: Int32Array | null = null;
+      if (!hatActive && population <= m.max) {
+        const ptr = e.world_export(world);
+        cells = new Int32Array(e.memory.buffer, ptr, population * 2).slice();
+      }
+      post({ t: 'cells', id: m.id, cells, generation, population }, cells ? [cells.buffer] : []);
+      break;
+    }
     case 'hatFrame':
       if (hat) hatFrame(m);
       else post({ t: 'unchanged', spare: m.spare, ...stats() }, m.spare ? [m.spare] : []);

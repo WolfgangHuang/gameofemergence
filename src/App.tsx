@@ -1,12 +1,18 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { parseRule, ruleName, type Rule } from './patterns/rule';
+import { buildLink, decodeCells, MAX_SHARED_CELLS, parseLink, type LinkContent } from './share/link';
+import { formatRleFile, parseRleFile, RleError } from './patterns/rle';
 import type { Pattern } from './patterns/library';
 import { flip, rotate, type Shape } from './patterns/rle';
 import type { Stats, TorusSize } from './sim/protocol';
 import { Stage, type Tool } from './stage/Stage';
 import { BrushIcon, ChevronIcon, ClearIcon, EraserIcon, HandIcon, PauseIcon, PlayIcon, SeedIcon, StampIcon, StepIcon } from './ui/icons';
-import type { HatPattern } from './patterns/hatPatterns';
+import { HAT_PATTERNS, type HatPattern } from './patterns/hatPatterns';
 import { HatPatternPanel, PatternPanel } from './ui/PatternPanel';
-import { parseRule, ruleName, RulePanel, type Rule } from './ui/RulePanel';
+import { RulePanel } from './ui/RulePanel';
+import { TableRulePanel } from './ui/TableRulePanel';
+import { RlePanel } from './ui/RlePanel';
+import { SharePanel } from './ui/SharePanel';
 import { TilePanel, type TileState } from './ui/TilePanel';
 import { DEFAULT_TORUS, TorusPanel } from './ui/TorusPanel';
 import { buildTiling, FAMILIES, HAT_NEIGHBOURHOODS, HAT_SHAPES, TOPOLOGY } from './tiles/tiles';
@@ -17,7 +23,9 @@ const numberFormat = new Intl.NumberFormat('en-US');
 const format = (n: number) => numberFormat.format(n);
 
 type StageStats = Stats & { rate: number };
-type Section = 'tile' | 'field' | 'rule' | 'patterns';
+type Section = 'tile' | 'field' | 'rule' | 'patterns' | 'share';
+/** The stamp preview is a texture of this size at most. */
+const MAX_IMPORT_SIDE = 4096;
 
 const INITIAL_TILE: TileState = { family: 'quad', preset: 'Square', outline: FAMILIES.quad.presets[0].outline, neighbourhood: 0, morph: 60 };
 
@@ -90,27 +98,33 @@ export function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<Stage | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  /** The link this page was opened with, read once. Pasting another one reloads the page. */
+  const [shared] = useState(() => parseLink(window.location.hash));
+  const [linkProblems, setLinkProblems] = useState(shared?.problems ?? []);
   const [running, setRunning] = useState(false);
   const [tool, setTool] = useState<Tool>('brush');
   const [brushSize, setBrushSize] = useState(1);
   const [speed, setSpeed] = useState(15);
   const [fade, setFade] = useState(14);
   const [density, setDensity] = useState(30);
-  const [tile, setTile] = useState<TileState>(INITIAL_TILE);
+  const [tile, setTile] = useState<TileState>(shared?.tile ?? INITIAL_TILE);
   const isHat = tile.family === 'hat';
   /** Both survive a visit to the hat tiling, which cannot be a torus. */
-  const [torusOn, setTorusOn] = useState(false);
-  const [torusSize, setTorusSize] = useState<TorusSize>(DEFAULT_TORUS);
+  const [torusOn, setTorusOn] = useState(shared?.torus != null);
+  const [torusSize, setTorusSize] = useState<TorusSize>(shared?.torus ?? DEFAULT_TORUS);
   const torus = useMemo(() => (torusOn && !isHat ? torusSize : null), [torusOn, isHat, torusSize]);
   const onTorus = torus !== null;
   const neighbourhood = tile.family === 'hat' ? HAT_NEIGHBOURHOODS[tile.neighbourhood] : FAMILIES[tile.family].neighbourhoods[tile.neighbourhood];
-  const [rule, setRule] = useState<Rule>(parseRule(neighbourhood.rules[0]));
+  const [rule, setRule] = useState<Rule>(shared?.rule ?? parseRule(neighbourhood.rules[0]));
   /** A pattern's own priority table, which replaces the rule while it is set. */
-  const [table, setTable] = useState<number[] | null>(null);
+  const [table, setTable] = useState<number[] | null>(HAT_PATTERNS.find((p) => p.id === shared?.table)?.table ?? null);
   const [stopWhenSettled, setStopWhenSettled] = useState(false);
   const [patternId, setPatternId] = useState<string | null>(null);
+  /** The hat pattern whose table is active, for the link. */
+  const tablePattern = HAT_PATTERNS.find((p) => p.table === table) ?? null;
+  const tableId = tablePattern?.id ?? null;
   const [stamp, setStamp] = useState<Shape | null>(null);
-  const [open, setOpen] = useState<Section | null>('tile');
+  const [open, setOpen] = useState<Section | null>(shared?.problems.length ? 'share' : 'tile');
   const [stats, setStats] = useState<StageStats>({ generation: 0, population: 0, status: 'active', period: 0, detail: 0, since: 0, rate: 0 });
   const [idle, setIdle] = useState(false);
 
@@ -160,13 +174,20 @@ export function App() {
     if (!onTorus && rule.birth & 1) setRule((current) => ({ ...current, birth: current.birth & ~1 }));
   }, [onTorus, rule.birth]);
   // Patterns belong to one kind of field.
+  const lastIsHat = useRef(isHat);
   useEffect(() => {
+    if (lastIsHat.current === isHat) return;
+    lastIsHat.current = isHat;
     setTool((current) => (current === 'stamp' ? 'brush' : current));
     setPatternId(null);
     setTable(null);
   }, [isHat]);
-  // Each neighbourhood starts from a rule known to stay lively on it.
+  // Each neighbourhood starts from a rule known to stay lively on it. A link may
+  // already have brought its own, so this only reacts to later changes.
+  const lastNeighbourhood = useRef(neighbourhood);
   useEffect(() => {
+    if (lastNeighbourhood.current === neighbourhood) return;
+    lastNeighbourhood.current = neighbourhood;
     setRule(parseRule(neighbourhood.rules[0]));
     // Hat patterns need all neighbours, and a rule from the panel ends their table.
     if (neighbourhood.topology !== 'hatVertices') setTable(null);
@@ -176,6 +197,35 @@ export function App() {
     }
   }, [neighbourhood]);
   useEffect(() => stageRef.current?.setTool(tool), [tool]);
+  // Has to follow the effects above, which set up the field that this fills.
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage || !shared) return;
+    let cancelled = false;
+    if (shared.camera) stage.setCamera(shared.camera);
+    if (shared.recipe) stage.applyRecipe(shared.recipe);
+    if (shared.cells) {
+      decodeCells(shared.cells).then(
+        (cells) => {
+          if (!cancelled) stage.loadCells(cells);
+        },
+        () => {
+          if (cancelled) return;
+          setLinkProblems((current) => [...current, 'cells']);
+          setOpen('share');
+        },
+      );
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [shared]);
+  // Pasting a link into the address bar of this tab only changes the fragment.
+  useEffect(() => {
+    const reload = () => window.location.reload();
+    window.addEventListener('hashchange', reload);
+    return () => window.removeEventListener('hashchange', reload);
+  }, []);
   useEffect(() => stageRef.current?.setStamp(stamp), [stamp]);
   useEffect(() => {
     if (stageRef.current) stageRef.current.brushRadius = brushSize - 1;
@@ -194,7 +244,7 @@ export function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || (e.target instanceof HTMLButtonElement && e.key === ' ')) return;
-      if (e.target instanceof HTMLInputElement && e.target.type === 'number') return;
+      if (e.target instanceof Element && e.target.matches('textarea, input[type=number], input[type=text]')) return;
       const stage = stageRef.current;
       switch (e.key.toLowerCase()) {
         case ' ':
@@ -281,6 +331,36 @@ export function App() {
       setTool((current) => (current === 'stamp' ? 'brush' : current));
     }
   };
+  const createLink = async (): Promise<{ url: string; content: LinkContent }> => {
+    const snapshot = await stageRef.current!.snapshot(MAX_SHARED_CELLS);
+    const { hash, content } = await buildLink({
+      settings: { tile, rule, table: isHat ? tableId : null, torus, camera: snapshot.camera },
+      ...snapshot,
+    });
+    return { url: window.location.href.split('#')[0] + hash, content };
+  };
+  const exportRle = async () => {
+    const { cells } = await stageRef.current!.snapshot(MAX_SHARED_CELLS);
+    if (!cells) return 'The field has too many cells to export.';
+    if (cells.length === 0) return 'The field is empty, there is nothing to export.';
+    return formatRleFile(cells, rule, torus) ?? 'The live cells are too far apart to export.';
+  };
+  /** Returns what is wrong with the text, if anything. */
+  const importRle = (text: string): string | null => {
+    try {
+      const { shape, rule: own } = parseRleFile(text);
+      if (shape.width > MAX_IMPORT_SIDE || shape.height > MAX_IMPORT_SIDE) return `The pattern is larger than ${MAX_IMPORT_SIDE} cells per side.`;
+      if (own && own.birth & 1 && !onTorus) return 'This rule has birth with 0 neighbours, which needs a torus.';
+      if (own && ruleName(own) !== ruleName(rule)) changeRule(own);
+      setPatternId(null);
+      setStamp(shape);
+      setTool('stamp');
+      return null;
+    } catch (error) {
+      if (error instanceof RleError) return `This cannot be read as a two-state RLE pattern: ${error.message}.`;
+      throw error;
+    }
+  };
   const pickPattern = (pattern: Pattern) => {
     setPatternId(pattern.id);
     setStamp(pattern.shape);
@@ -321,17 +401,31 @@ export function App() {
             <TilePanel state={tile} onChange={setTile} />
             {isHat && capped && <p className="note warn">The cell limit of this browser tab is reached, so the field ends here.</p>}
           </PanelSection>
-          <PanelSection title="Rule" readout={table ? 'Pattern table' : ruleName(rule)} open={open === 'rule'} onToggle={() => toggleSection('rule')}>
-            {table && <p className="note warn">A four-state table set by the pattern is active. Choosing a rule below ends it.</p>}
-            <RulePanel rule={rule} count={neighbourhood.count} presets={neighbourhood.rules} birthFromNothing={onTorus} onChange={changeRule} />
+          <PanelSection title="Rule" readout={tablePattern ? 'Extended ruleset' : ruleName(rule)} open={open === 'rule'} onToggle={() => toggleSection('rule')}>
+            {tablePattern ? (
+              <TableRulePanel pattern={tablePattern} onReturn={() => changeRule(rule)} />
+            ) : (
+              <RulePanel rule={rule} count={neighbourhood.count} presets={neighbourhood.rules} birthFromNothing={onTorus} onChange={changeRule} />
+            )}
           </PanelSection>
           <PanelSection title="Patterns" open={open === 'patterns'} onToggle={() => toggleSection('patterns')}>
             {isHat ? (
               <HatPatternPanel selected={patternId} onSelect={pickHatPattern} />
             ) : patternsFit ? (
-              <PatternPanel selected={patternId} conway={conway} onSelect={pickPattern} />
+              <>
+                <p className="note">Your own pattern can be pasted as RLE under Share &amp; export.</p>
+                <PatternPanel selected={patternId} conway={conway} onSelect={pickPattern} />
+              </>
             ) : (
               <p className="note">The library is made for quadrilaterals with eight neighbours. No patterns are collected for this grid yet.</p>
+            )}
+          </PanelSection>
+          <PanelSection title="Share &amp; export" open={open === 'share'} onToggle={() => toggleSection('share')}>
+            <SharePanel problems={linkProblems} create={createLink} />
+            {patternsFit && !isHat ? (
+              <RlePanel onImport={importRle} onExport={exportRle} />
+            ) : (
+              <p className="note">Export as RLE text is available for quadrilaterals with eight neighbours, the grid other Life programs use.</p>
             )}
           </PanelSection>
           <PanelSection title="Field" readout={torus ? `${torus.width} \u00d7 ${torus.height}` : isHat ? undefined : 'Unbounded'} open={open === 'field'} onToggle={() => toggleSection('field')}>

@@ -40,7 +40,9 @@ export type ToWorker =
   /** One bit per neighbour count. */
   | { t: 'rule'; birth: number; survive: number }
   | { t: 'soup'; x: number; y: number; width: number; height: number; density: number; seed: number }
-  | ({ t: 'frame'; spare: ArrayBuffer | null } & FrameWindow);
+  | ({ t: 'frame'; spare: ArrayBuffer | null } & FrameWindow)
+  /** Asks for all live cells of the grid field, unless there are more than `max`. */
+  | { t: 'exportCells'; id: number; max: number };
 
 export type StatusKind = 'active' | 'empty' | 'still' | 'oscillating' | 'drifting' | 'growing';
 
@@ -62,5 +64,7 @@ export type FromWorker =
   /** Newly generated cells, five numbers each. Always sent before their first frame. */
   | { t: 'hatCells'; cells: Int32Array; capped: boolean }
   | ({ t: 'frame'; data: Uint8Array<ArrayBuffer> } & FrameWindow & Stats)
+  /** Flat x, y pairs, or null on the hat tiling and above the requested maximum. */
+  | { t: 'cells'; id: number; cells: Int32Array | null; generation: number; population: number }
   /** Nothing changed since the last frame for this window. Returns the spare buffer. */
   | ({ t: 'unchanged'; spare: ArrayBuffer | null } & Stats);

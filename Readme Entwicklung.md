@@ -1,6 +1,6 @@
 # Game of Emergence: Entwicklung
 
-Stand: 8. November 2026, nach Schritt 4 von ursprünglich 5, ergänzt um den Hat-Glider und den Torus.
+Stand: 8. November 2026, nach Schritt 4 von ursprünglich 5, ergänzt um den Hat-Glider, den Torus und das Teilen per Link.
 
 Dieses Dokument hält fest, was gebaut wurde, warum es so gebaut ist und was als Nächstes ansteht. Installation und Bedienung stehen in der [Readme.md](Readme.md).
 
@@ -30,7 +30,8 @@ Rust/WASM-Engine (engine/src/)
 | `src/tiles/tiles.ts` | Periodische Kachelungen, Vorlagen, Regelvorschläge |
 | `src/render/renderer.ts` | Periodisches Feld und Nachglühen |
 | `src/render/HatScene.ts` | Hat-Kacheln als Instanzen, Zellsuche |
-| `src/patterns/` | Musterbibliothek als JSON, RLE-Parser |
+| `src/patterns/` | Musterbibliothek als JSON, RLE lesen und schreiben, Regeln als Text |
+| `src/share/link.ts` | Feldzustand als URL-Fragment, Prüfung eingehender Links |
 | `scripts/` | WASM-Build, Benchmark, Prüfskripte |
 
 ## Bisherige Schritte
@@ -58,6 +59,10 @@ Priority-Table-Regeln mit 4 Zuständen in der Hat-Engine und Glider A von James 
 ### Nachtrag: Torus
 
 Felder fester Größe für alle periodischen Gitter, siehe „Torus“.
+
+### Nachtrag: Teilen per Link und RLE
+
+Links mit Einstellungen und Zellen, dazu RLE-Import und -Export, siehe „Teilen per Link“.
 
 ## Designentscheidungen
 
@@ -120,6 +125,29 @@ Ein Torus ist ein eigenes `World`-Objekt neben der Ebene. Beide behalten beim We
 
 **Rendering:** Der Worker liefert höchstens eine Periode, den Rest wiederholt der Shader durch Umwickeln der Zellkoordinaten. Die Tapete kostet also nichts zusätzlich, unabhängig vom Zoom. Die Grenzlinie ist eine Gerade in Gitterkoordinaten. Bei Dreiecken und schrägen Formen läuft sie deshalb durch Zellen, statt ihren Kanten zu folgen. Das ist nur Anzeige, die Simulation betrifft es nicht.
 
+### Teilen per Link
+
+Die Seite hat keinen Server, also steckt alles im URL-Fragment (`#v=1&p=Square&r=B3/S23&c=0,0,14&a=100,50,bo-2bo-3o`). Fragmente gehen nie an einen Webserver. Das Feld `v` trägt die Formatversion.
+
+**Was ein Link enthält,** entscheidet `buildLink` in dieser Reihenfolge:
+
+| Lage | Inhalt des Links | Ergebnis beim Öffnen |
+|---|---|---|
+| Zufallsfeld, Generation 0, sonst unberührt | Startwert und Dichte | exakt dieses Feld |
+| Zellen passen in 32.000 Zeichen | Zellen als RLE | exakt dieses Feld |
+| zu viele Zellen, Feld stammt aus einem Zufallsfeld | Startwert und Dichte | der Start dieses Laufs, die Seite weist darauf hin |
+| zu viele Zellen, sonst | nur Einstellungen | leeres Feld, die Seite weist darauf hin |
+
+Geöffnete Links stehen immer pausiert bei Generation 0, der Zählerstand wird nicht übertragen.
+
+**Zellen:** RLE, als `a=` im Klartext oder als `z=` mit Deflate und Base64url, je nachdem, was kürzer ist. `$` wird im Klartext zu `-`, das schließende `!` entfällt, weil Link-Erkennungen dort gern aufhören. Ein Glider braucht so unter 100 Zeichen, ein zufälliges 128×128 rund 3.900. Ab 2.000 Zeichen warnt die Seite, dass manche Programme den Link kürzen.
+
+**Zufallsfelder:** `Stage` merkt sich je Feld, ob es seit dem letzten Leeren nur eine einzige Zufallsfüllung erhalten hat. Jede Malaktion löscht diese Angabe. Auf dem Hat hing die Verteilung zunächst von den Kachel-Ids ab, also davon, wo die Ansicht vorher war. `HatWorld::soup` geht deshalb jetzt nach Position.
+
+**Links sind fremde Eingaben.** `parseLink` prüft jeden Wert und meldet Verworfenes in der Oberfläche, der Rest des Links gilt weiter. Begrenzt sind Größen, Koordinaten, Zellzahl (2 Millionen) und die entpackte Länge (16 MB), damit ein kurzer Link nicht den Tab lahmlegt. Unbekannte Versionen werden ganz ignoriert.
+
+**RLE-Import:** Kommentare und Kopfzeile sind optional, die alte Form `23/3` und der Zusatz `:T100,100` werden verstanden. Bringt das Muster eine Regel mit, wird sie aktiv. Mehrzustandsmuster und nicht-totalistische Regeln werden mit einer Meldung abgelehnt. Der Export schreibt die Torus-Größe so in die Regel, wie Golly es tut.
+
 ### Rendering über eine Nachschlagetextur
 
 Für periodische Kacheln rendert `Renderer.setTiling` eine Gitterperiode in eine Textur von 512×512 Texeln: Jeder Texel enthält die Zelle und den Abstand zu ihrem Umriss. Das geschieht nur, wenn sich die Kachel ändert. Der Display-Shader braucht danach keine Geometrie mehr, jede Form kostet gleich viel, und die Abstandswerte liefern die Gitterlinien.
@@ -175,7 +203,7 @@ Auf dem Hat meldet die Erkennung nie „Drifting“. Der Beweis oben braucht ein
 
 **Quelle:** James Edmond, „Gliders on Aperiodic Monotilings: Cellular Automata on the Hat and Spectre“, [arXiv:2609.22579](https://arxiv.org/abs/2609.22579) (Preprint), mit dem Repository [monotile-ca](https://github.com/jamesedmond/monotile-ca) (MIT/Apache-2.0, Hinweis in `public/THIRD_PARTY_NOTICES.txt`). Laut Paper reichen life-artige Regeln mit Kanten-Nachbarn dafür nicht: Es braucht die Ecken-Nachbarschaft und Regeln, bei denen Nachbarn auch die übrigen Zustände sehen.
 
-**Engine:** `HatWorld` kennt deshalb zusätzlich Priority Tables. Die erste Zeile, deren Eigenzustand und Nachbarbedingungen passen, bestimmt den nächsten Zustand, ohne Treffer folgt Zustand 0. Zellbytes sind zugleich Texturwerte (0, 255, 150, 90), so schattiert der Renderer die Zustände ohne eigene Logik. Die Tabelle von Glider A ist unverändert übernommen, inklusive wirkungsloser Zeilen.
+**Engine:** `HatWorld` kennt deshalb zusätzlich Priority Tables. Die erste Zeile, deren Eigenzustand und Nachbarbedingungen passen, bestimmt den nächsten Zustand, ohne Treffer folgt Zustand 0. Zellbytes sind zugleich Texturwerte (0, 255, 150, 90), so schattiert der Renderer die Zustände ohne eigene Logik. Die Tabelle von Glider A ist unverändert übernommen, inklusive wirkungsloser Zeilen. Das Rule-Panel zeigt nur die wirksamen Zeilen: `effectiveRows` in `src/patterns/tableRows.ts` lässt verdeckte Zeilen weg, für Glider A bleiben 5 von 8. Einmalig erschöpfend geprüft (alle Eigenzustände, Nachbarzahlen bis 12), aber nicht Teil von `npm test`.
 
 **Platzieren:** Die Kachel-Adressen des Papers gelten für dessen eigenen Generator und lassen sich nicht übertragen. Das ist auch nicht nötig: Laut Paper zünden 89 % von 188 Startpaaren. Ein Klick setzt Zustand 1 auf die Kachel und Zustand 2 auf eine Kanten-Nachbarin.
 
@@ -219,12 +247,14 @@ Native Rust-Tests bräuchten einen C-Linker. Die Engine-Tests laufen deshalb unt
 
 Letzter Stand: alle grün, mit einer Einschränkung: `npm test` brach am 8. November einmal mit einem Speicherzugriffsfehler (SIGSEGV) in Node ab, während die Engine-Tests liefen. Das geschah im ersten von gut 25 Läufen und kam danach nicht wieder, auch nicht bei unverändertem Code. Ein erneuter Lauf genügt dann. Die Ursache ist nicht geklärt, siehe auch `check-hat-glider.mjs` unten. Ein Fehler in der Engine selbst scheidet als direkte Ursache aus, weil WASM-Code aus seiner Sandbox heraus Node nicht zum Absturz bringen kann.
 
-- **49 Engine-Tests:** unter anderem Vergleich mit naiven Referenzen auf allen Gittern, auch auf dem Torus mit Seiten, die kein Vielfaches von 64 sind, und mit B0, Überlappungsfreiheit und Passgenauigkeit der Hats, Flächenfaktor φ⁴ pro Ebene, langfristige Gültigkeit gemeldeter Zustände.
+- **51 Engine-Tests:** unter anderem Vergleich mit naiven Referenzen auf allen Gittern, auch auf dem Torus mit Seiten, die kein Vielfaches von 64 sind, und mit B0, Überlappungsfreiheit und Passgenauigkeit der Hats, Flächenfaktor φ⁴ pro Ebene, langfristige Gültigkeit gemeldeter Zustände.
 - **`check-patterns.mjs`:** Simuliert alle 24 Muster und prüft Periode, Verschiebung und Wachstum. R-Pentomino und Acorn erreichen ihre aus der Literatur bekannten Endpopulationen 116 und 633.
 - **`check-tiles.mjs`:** Liest die Nachbarn geometrisch aus den Polygonen ab und vergleicht das Ergebnis einer davon gesteuerten naiven Simulation mit der Engine. Prüft außerdem für alle Vorlagen, dass die Kacheln an der Naht eines Torus passen.
 - **`check-hat-glider.mjs`:** Fliegt Glider A von 11 Startkacheln und vergleicht Population, Richtung und Tempo mit dem Paper. Die langen Flüge laufen hier statt in den Engine-Tests, weil Node im WASI-Testaufbau bei solchen Läufen mit einem Speicherzugriffsfehler abbricht. Direkt als WASM läuft derselbe Code sauber, die Ursache ist nicht geklärt.
 
-Die Browsertests liefen mit Playwright und liegen nicht im Repository. Das gilt auch für den Torus. Er wurde in Headless-Chrome über das DevTools-Protokoll geprüft: alle Kachelfamilien, Malen über die Naht, Glider-Umlauf, B0, Wechsel zwischen den Feldern, 4096×4096. Beim Verschieben über die Naht stimmten die Bilder bis auf den Versatz pixelgenau überein.
+- **`check-share.mjs`:** Rundläufe für RLE und Links über alle Vorlagen, dazu rund 30 fehlerhafte oder böswillige Eingaben, unter anderem eine Deflate-Bombe.
+
+Die Browsertests liefen mit Playwright und liegen nicht im Repository. Das gilt auch für den Torus. Er wurde in Headless-Chrome über das DevTools-Protokoll geprüft: alle Kachelfamilien, Malen über die Naht, Glider-Umlauf, B0, Wechsel zwischen den Feldern, 4096×4096. Beim Verschieben über die Naht stimmten die Bilder bis auf den Versatz pixelgenau überein. Links wurden dort ebenfalls geprüft: erzeugen, in einem frischen Tab öffnen, Bilder vergleichen. Auf Quadraten und Dreiecken war das pixelgenau, auf schrägen Hexagonen und dem Hat wichen bei gleicher Population höchstens 0,3 % der dunklen Pixel ab, vermutlich wegen der gerundeten Kameraposition.
 
 ## Bekannte Lücken
 
@@ -235,6 +265,9 @@ Die Browsertests liefen mit Playwright und liegen nicht im Repository. Das gilt 
 - **Weit herausgezoomt** wird beim Hat ab einem Sichtradius von 700 Rastereinheiten nichts Neues erzeugt.
 - **Auto-Pause läuft nach.** Bei Maximaltempo hält die Simulation einige Tausend Generationen zu spät an, weil die Oberfläche den Status nur mit der Bildrate erfährt. Am Ergebnis ändert das nichts, aber Glider sind dann schon aus dem Bild.
 - **Formwechsel deutet Zellen um.** Beim Wechsel von Familie oder Nachbarschaft bleiben die Zellen stehen und bedeuten auf dem neuen Gitter etwas anderes.
+- **Hat-Zellen im Link:** Von Hand gemalte Zellen und platzierte Glider auf dem Hat gehen nicht in einen Link, nur Einstellungen, Pattern-Tabelle und Zufallsfelder. Kachel-Ids hängen von der Erzeugungsreihenfolge ab, es bräuchte also Positionen. Die Seite weist darauf hin.
+- **Link kennt die Generation nicht.** Der Zählerstand beginnt beim Öffnen wieder bei 0, und bei der Rückfallstufe „Start des Laufs“ ist der Fortschritt verloren.
+- **RLE** nur für Vierecke mit 8 Nachbarn. Andere Programme würden Muster auf anderen Gittern ohnehin anders deuten.
 - **Musterbibliothek** nur für Vierecke mit 8 Nachbarn, dazu ein Glider auf dem Hat.
 - **Perioden über 720 Generationen** erkennt die Statusanzeige auf der Ebene und dem Hat nicht. Auf dem Torus gilt die Grenze nur noch für die Periode der Population.
 - **Torus, weit herausgezoomt:** Am Rand einer Periode kann ein Texel etwas zu hell ausfallen, wenn die Seite kein Vielfaches der Texelgröße ist.
@@ -249,11 +282,10 @@ Die Browsertests liefen mit Playwright und liegen nicht im Repository. Das gilt 
    - Die Engine unterscheidet bisher nur zwei Zellklassen über die Parität. Die Kairo-Kachelung braucht vermutlich vier (x und y modulo 2), `advance_general` muss also verallgemeinert werden.
    - Vor dem Bau klären: Welche Typen sollen verformbar sein, und wie viele Nachbarn ergeben sich? Das Prüfskript `check-tiles.mjs` kann die Tabellen wie bei den anderen Formen gegen die Geometrie absichern.
    - Für die Regeln ist wieder ein Suchlauf nötig.
-3. **Teilen per Link.** Regel, Kachelform und Startzustand in der URL, dazu RLE-Import und -Export.
-4. **Deployment** auf den eigenen Ubuntu-Server bei Hetzner (CX22). Die Seite ist statisch, der Server muss `.wasm` als `application/wasm` ausliefern. COOP/COEP-Header werden erst nötig, falls später WASM-Threads dazukommen.
-5. **Mehr Hat-Muster und Regeln.** Glider C (ein Dreifach-Glider) aus monotile-ca lässt sich wie Glider A übernehmen. *Worms* von Trevorrow und die Regel von Gabbay nur nach Klärung der Rechte, monotile-ca nutzt sie mit deren Erlaubnis. Dazu eine Kamera, die einem Muster folgt, und die in HatLife übliche größere Nachbarschaftsreichweite (`N2`).
-6. **Test auf echter Hardware.** GPU, Firefox, Safari und Touch, wie unter „Bekannte Lücken“ beschrieben.
-7. **Mögliche Erweiterungen, noch nicht entschieden:**
+3. **Deployment** auf den eigenen Ubuntu-Server bei Hetzner (CX22). Die Seite ist statisch, der Server muss `.wasm` als `application/wasm` ausliefern. COOP/COEP-Header werden erst nötig, falls später WASM-Threads dazukommen.
+4. **Mehr Hat-Muster und Regeln.** Glider C (ein Dreifach-Glider) aus monotile-ca lässt sich wie Glider A übernehmen. *Worms* von Trevorrow und die Regel von Gabbay nur nach Klärung der Rechte, monotile-ca nutzt sie mit deren Erlaubnis. Dazu eine Kamera, die einem Muster folgt, und die in HatLife übliche größere Nachbarschaftsreichweite (`N2`).
+5. **Test auf echter Hardware.** GPU, Firefox, Safari und Touch, wie unter „Bekannte Lücken“ beschrieben.
+6. **Mögliche Erweiterungen, noch nicht entschieden:**
    - echter chiraler Spectre mit eigener Substitution
    - Muster für Hexagone und Dreiecke suchen
    - Hashlife für extrem lange Läufe auf Quadraten
@@ -261,6 +293,6 @@ Die Browsertests liefen mit Playwright und liegen nicht im Repository. Das gilt 
 
 ## Organisatorisches
 
-- **Git:** Noch kein Repository angelegt, nur eine `.gitignore`.
+- **Git:** Lokales Repository ohne Remote. `src/sim/engine.wasm` und `engine/target` sind ausgeschlossen, der Build erzeugt sie.
 - **Nextcloud:** `node_modules` und `dist` stehen in der globalen Ausschlussliste, `target` noch nicht. Ein Eintrag dort gilt für alle Ordner dieses Namens im Sync. `engine/target` sollte also vor dem nächsten Sync ausgeschlossen oder anders gelöst werden.
 - **Lizenz:** Für das Projekt selbst noch nicht festgelegt.

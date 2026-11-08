@@ -1,5 +1,6 @@
 import { HatScene } from '../render/HatScene';
 import { brushReach, Renderer } from '../render/renderer';
+import type { Camera, Recipe } from '../share/link';
 import type { Shape } from '../patterns/rle';
 import type { FromWorker, Stats, ToWorker, TorusSize } from '../sim/protocol';
 import { gridToWorld, locate, worldToGrid, type Tiling } from '../tiles/tiles';
@@ -25,10 +26,25 @@ interface Point {
   y: number;
 }
 
-interface Camera {
+interface SavedCamera {
   x: number;
   y: number;
   size: number;
+}
+
+export interface FieldSnapshot {
+  cells: Int32Array | null;
+  generation: number;
+  population: number;
+  /** Set while the field still follows from a single random fill. */
+  recipe: Recipe | null;
+  camera: Camera;
+}
+
+interface FieldOrigin {
+  /** Nothing has been done to this field since it was last empty. */
+  pristine: boolean;
+  recipe: Recipe | null;
 }
 
 export class Stage {
@@ -50,7 +66,14 @@ export class Stage {
   private torus: TorusSize | null = null;
   /** The size the saved torus camera belongs to. */
   private lastTorus: TorusSize | null = null;
-  private savedCamera: { plane?: Camera; torus?: Camera } = {};
+  private savedCamera: { plane?: SavedCamera; torus?: SavedCamera } = {};
+  private origins: Record<'plane' | 'torus' | 'hat', FieldOrigin> = {
+    plane: { pristine: true, recipe: null },
+    torus: { pristine: true, recipe: null },
+    hat: { pristine: true, recipe: null },
+  };
+  private nextExport = 0;
+  private exports = new Map<number, (m: Extract<FromWorker, { t: 'cells' }>) => void>();
   private fitPending = false;
 
   /** Set while the hat tiling is showing; `hat` exists once the worker built it. */
@@ -137,6 +160,8 @@ export class Stage {
   }
 
   clear() {
+    this.origin.pristine = true;
+    this.origin.recipe = null;
     this.send({ t: 'clear' });
     this.frameDirty = true;
   }
@@ -149,6 +174,8 @@ export class Stage {
     const resized = next !== null && (next.width !== this.lastTorus?.width || next.height !== this.lastTorus?.height);
 
     if (!this.hatMode) this.savedCamera[this.torus ? 'torus' : 'plane'] = { x: this.centerX, y: this.centerY, size: this.cellSize };
+    // A new size drops cells, so the random fill alone no longer explains the field.
+    if (resized) this.origins.torus.recipe = null;
     if (next && resized) {
       this.fitPending = true;
     } else if (!hat) {
@@ -220,16 +247,16 @@ export class Stage {
 
   /** Fills the visible area, or a centred part of it when zoomed far out. */
   randomize(density = 0.3) {
+    const seed = (Math.random() * 2 ** 32) >>> 0;
     if (this.hatMode) {
       if (!this.hat) return;
-      const radius = Math.min(this.hatViewRadius(), MAX_HAT_SOUP);
-      this.send({ t: 'hatSoup', x: this.hatCenter[0], y: this.hatCenter[1], radius, density, seed: (Math.random() * 2 ** 32) >>> 0 });
-      this.frameDirty = true;
+      const short = (value: number) => Number(value.toFixed(3));
+      const radius = short(Math.min(this.hatViewRadius(), MAX_HAT_SOUP));
+      this.applyRecipe({ kind: 'hat', x: short(this.hatCenter[0]), y: short(this.hatCenter[1]), radius, density, seed });
       return;
     }
     if (this.torus) {
-      this.send({ t: 'soup', x: 0, y: 0, ...this.torus, density, seed: (Math.random() * 2 ** 32) >>> 0 });
-      this.frameDirty = true;
+      this.applyRecipe({ kind: 'grid', x: 0, y: 0, ...this.torus, density, seed });
       return;
     }
     const view = this.visibleCells();
@@ -237,18 +264,74 @@ export class Stage {
     const height = Math.min(Math.ceil(view.height), MAX_SOUP);
     const x = Math.floor(view.x + (view.width - width) / 2);
     const y = Math.floor(view.y + (view.height - height) / 2);
-    this.send({ t: 'soup', x, y, width, height, density, seed: (Math.random() * 2 ** 32) >>> 0 });
+    this.applyRecipe({ kind: 'grid', x, y, width, height, density, seed });
+  }
+
+  /** Performs a random fill. Same recipe on an empty field, same result. */
+  applyRecipe(recipe: Recipe) {
+    const origin = this.origin;
+    if (recipe.kind === 'hat') {
+      const { x, y, radius, density, seed } = recipe;
+      this.send({ t: 'hatSoup', x, y, radius, density, seed });
+    } else {
+      const { x, y, width, height, density, seed } = recipe;
+      this.send({ t: 'soup', x, y, width, height, density, seed });
+    }
+    origin.recipe = origin.pristine ? recipe : null;
+    origin.pristine = false;
     this.frameDirty = true;
+  }
+
+  /** Adds live cells, given as flat x, y pairs. */
+  loadCells(cells: Int32Array<ArrayBuffer>) {
+    this.send({ t: 'paint', cells, alive: true }, [cells.buffer]);
+    this.frameDirty = true;
+  }
+
+  setCamera(camera: Camera) {
+    this.cellSize = clamp(camera.size * this.dpr, MIN_CELL, MAX_CELL);
+    if (this.hatMode) this.hatCenter = [camera.x, camera.y];
+    else {
+      this.centerX = camera.x;
+      this.centerY = camera.y;
+    }
+    this.fitPending = false;
+    this.viewChanged();
+  }
+
+  /** What a link needs to know about the field being shown. */
+  snapshot(maxCells: number): Promise<FieldSnapshot> {
+    const id = this.nextExport++;
+    const { recipe } = this.origin;
+    const [x, y] = this.hatMode ? this.hatCenter : [this.centerX, this.centerY];
+    const camera = { x, y, size: this.cellSize / this.dpr };
+    return new Promise((resolve) => {
+      this.exports.set(id, ({ cells, generation, population }) => resolve({ cells, generation, population, recipe, camera }));
+      this.send({ t: 'exportCells', id, max: maxCells });
+    });
+  }
+
+  private get origin() {
+    return this.origins[this.hatMode ? 'hat' : this.torus ? 'torus' : 'plane'];
   }
 
   // Worker
 
   private send(message: ToWorker, transfer: Transferable[] = []) {
+    if (message.t === 'paint' || message.t === 'hatPaint' || message.t === 'hatSeed') {
+      this.origin.pristine = false;
+      this.origin.recipe = null;
+    }
     this.worker.postMessage(message, transfer);
   }
 
   private receive(m: FromWorker) {
     if (m.t === 'ready') return;
+    if (m.t === 'cells') {
+      this.exports.get(m.id)?.(m);
+      this.exports.delete(m.id);
+      return;
+    }
     if (m.t === 'hatReady') {
       this.hat = new HatScene(this.renderer.gl, m.outline, m.ratio);
       this.hat.setMorph(this.pendingMorph);

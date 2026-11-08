@@ -8,7 +8,7 @@
     "dev": "npm run wasm && vite",
     "build": "npm run wasm && tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test": "node scripts/build-wasm.mjs --test && node scripts/build-wasm.mjs && node --no-warnings scripts/check-patterns.mjs && node --no-warnings scripts/check-tiles.mjs && node --no-warnings scripts/check-hat-glider.mjs",
+    "test": "node scripts/build-wasm.mjs --test && node scripts/build-wasm.mjs && node --no-warnings scripts/check-patterns.mjs && node --no-warnings scripts/check-tiles.mjs && node --no-warnings scripts/check-hat-glider.mjs && node --no-warnings scripts/check-share.mjs",
     "bench": "npm run wasm && node scripts/bench.mjs"
   },
   "dependencies": {

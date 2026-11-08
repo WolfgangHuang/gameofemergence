@@ -291,6 +291,12 @@ export const HAT_NEIGHBOURHOODS: { name: string; topology: HatTopology; count: n
   { name: 'Edges only', topology: 'hatEdges', count: 6, rules: ['B23/S4', 'B2/S246', 'B26/S24', 'B2/S24', 'B2/S245', 'B24/S26'] },
 ];
 
+export const MIN_TORUS_SIDE = 8;
+export const MAX_TORUS_SIDE = 4096;
+
+/** Odd sides would not let the tiles of most families fit together across the seam. */
+export const isValidTorusSide = (n: number) => Number.isInteger(n) && n % 2 === 0 && n >= MIN_TORUS_SIDE && n <= MAX_TORUS_SIDE;
+
 /** Points of the Tile(a, b) family as angles: a = cos, b = sin. */
 export const HAT_SHAPES: { name: string; degrees: number }[] = [
   { name: 'Comet', degrees: 6 },

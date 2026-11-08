@@ -515,11 +515,19 @@ impl HatWorld {
         let mut s = seed | 1;
         let o = self.origin.lattice();
         let (ax, ay) = (x + o.x(), y + o.y());
-        for cell in 0..self.frames.len() as u32 {
-            let at = self.frames[cell as usize].at.lattice();
-            if (at.x() - ax).hypot(at.y() - ay) > radius {
-                continue;
-            }
+        let mut inside: Vec<u32> = (0..self.frames.len() as u32)
+            .filter(|&cell| {
+                let at = self.frames[cell as usize].at.lattice();
+                (at.x() - ax).hypot(at.y() - ay) <= radius
+            })
+            .collect();
+        // Ids follow the order of generation, which depends on where the view has
+        // been. Going by position, a seed means the same field for everybody.
+        inside.sort_unstable_by_key(|&cell| {
+            let f = &self.frames[cell as usize];
+            (f.at.p.q, f.at.p.r, f.at.q.q, f.at.q.r, f.rotation, f.flip)
+        });
+        for cell in inside {
             s ^= s << 13;
             s ^= s >> 17;
             s ^= s << 5;
@@ -689,6 +697,28 @@ mod tests {
             assert_eq!(actual, expected, "generation {generation}");
             assert_eq!(w.population as usize, expected.len());
         }
+    }
+
+    #[test]
+    fn a_seed_means_the_same_field_wherever_the_view_has_been() {
+        let cells = |w: &HatWorld| -> Set<(i64, i64, i64, i64, u8, bool)> {
+            live(w)
+                .into_iter()
+                .map(|c| {
+                    let f = &w.frames[c as usize];
+                    (f.at.p.q, f.at.p.r, f.at.q.q, f.at.q.r, f.rotation, f.flip)
+                })
+                .collect()
+        };
+        let mut direct = HatWorld::new();
+        direct.soup(10.0, -5.0, 40.0, 0.3, 4711);
+        let mut wandered = HatWorld::new();
+        wandered.load_around(90.0, 70.0, 30.0);
+        wandered.load_around(-60.0, 20.0, 45.0);
+        wandered.soup(10.0, -5.0, 40.0, 0.3, 4711);
+        assert_ne!(direct.frames.len(), wandered.frames.len());
+        assert!(direct.population > 0);
+        assert_eq!(cells(&direct), cells(&wandered));
     }
 
     #[test]
