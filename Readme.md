@@ -6,6 +6,7 @@ Conways „Game of Life“ im Browser, auf einem unbegrenzten Feld und auf viele
 
 - **Unbegrenztes Feld:** Es wird nur gespeichert und berechnet, wo etwas passiert. Rund 3 Milliarden Zellen pro Sekunde auf Quadraten.
 - **Torus:** Wahlweise ein Feld fester Größe, dessen Ränder sich berühren. Was hinausläuft, kommt von der anderen Seite zurück. Das gibt es für alle Kachelformen außer den Einstein-Kacheln, die sich nicht wiederholen.
+- **3D-Donut:** Der Torus lässt sich als drehbarer Ring betrachten, auch während die Simulation läuft. Gemalt und eingestellt wird in der flachen Ansicht.
 - **Kachelformen:** Vierecke (Quadrat, Rechteck, Parallelogramm, Raute, Trapez, Drachen, Dart), Dreiecke, Hexagone und Einstein-Kacheln.
 - **Live verformbar:** Die Ecken einer Kachel lassen sich ziehen, auch während die Simulation läuft. Die Einstein-Kacheln morphen stufenlos zwischen Comet, Turtle, Spectre-Form, Hat und Chevron.
 - **Regeln frei einstellbar:** Geburt und Überleben pro Nachbarzahl, dazu passende Vorlagen je Kachelform. Die Nachbarschaft ist wählbar, also nur über Kanten oder auch über Ecken. Auf dem Torus ist auch Geburt bei 0 Nachbarn möglich.
@@ -26,6 +27,7 @@ Conways „Game of Life“ im Browser, auf einem unbegrenzten Feld und auf viele
 | `P` | Musterbibliothek öffnen |
 | `S` | Zufallsfeld |
 | `C` | Feld löschen |
+| `D` | Torus als 3D-Donut / flach |
 | `R` / `F` / `Esc` | Muster drehen / spiegeln / Platzieren beenden |
 
 Das Mausrad zoomt. Verschieben geht auch mit rechter oder mittlerer Maustaste oder mit gedrückter Shift-Taste.

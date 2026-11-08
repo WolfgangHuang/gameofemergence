@@ -114,6 +114,9 @@ export function App() {
   const [torusSize, setTorusSize] = useState<TorusSize>(shared?.torus ?? DEFAULT_TORUS);
   const torus = useMemo(() => (torusOn && !isHat ? torusSize : null), [torusOn, isHat, torusSize]);
   const onTorus = torus !== null;
+  /** The torus as a ring in space. It only shows the field, drawing happens in the flat view. */
+  const [donutOn, setDonutOn] = useState(false);
+  const donut = donutOn && onTorus;
   const neighbourhood = tile.family === 'hat' ? HAT_NEIGHBOURHOODS[tile.neighbourhood] : FAMILIES[tile.family].neighbourhoods[tile.neighbourhood];
   const [rule, setRule] = useState<Rule>(shared?.rule ?? parseRule(neighbourhood.rules[0]));
   /** A pattern's own priority table, which replaces the rule while it is set. */
@@ -162,6 +165,7 @@ export function App() {
     else stage.setHatEdgesOnly(neighbourhood.topology === 'hatEdges');
     stage.onCapped = setCapped;
   }, [tiling, neighbourhood.topology, isHat, torus]);
+  useEffect(() => stageRef.current?.setDonut(donut), [donut]);
   useEffect(() => stageRef.current?.setMorph(tile.morph), [tile.morph]);
   useEffect(() => {
     const stage = stageRef.current;
@@ -240,13 +244,22 @@ export function App() {
 
   const densityRef = useRef(density);
   densityRef.current = density;
+  const donutRef = useRef(donut);
+  donutRef.current = donut;
+  const onTorusRef = useRef(onTorus);
+  onTorusRef.current = onTorus;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || (e.target instanceof HTMLButtonElement && e.key === ' ')) return;
       if (e.target instanceof Element && e.target.matches('textarea, input[type=number], input[type=text]')) return;
       const stage = stageRef.current;
-      switch (e.key.toLowerCase()) {
+      const key = e.key.toLowerCase();
+      if (donutRef.current && !' nd'.includes(key)) return;
+      switch (key) {
+        case 'd':
+          if (onTorusRef.current) setDonutOn((on) => !on);
+          break;
         case ' ':
           e.preventDefault();
           setRunning((r) => !r);
@@ -369,34 +382,61 @@ export function App() {
 
   return (
     <>
-      <canvas ref={canvasRef} className={tool === 'hand' ? 'field hand' : 'field'} />
+      <canvas ref={canvasRef} className={tool === 'hand' || donut ? 'field hand' : 'field'} />
 
       <div className={idle ? 'chrome idle' : 'chrome'}>
         <header className="brand">Game of Emergence</header>
 
-        <aside className="panel tools" aria-label="Tools">
-          <IconButton label="Brush" keyHint="B" active={tool === 'brush'} onClick={() => pickTool('brush')}>
-            <BrushIcon />
-          </IconButton>
-          <IconButton label="Eraser" keyHint="E" active={tool === 'eraser'} onClick={() => pickTool('eraser')}>
-            <EraserIcon />
-          </IconButton>
-          <IconButton label="Move" keyHint="H" active={tool === 'hand'} onClick={() => pickTool('hand')}>
-            <HandIcon />
-          </IconButton>
-          <IconButton label="Patterns" keyHint="P" active={tool === 'stamp'} onClick={() => toggleSection('patterns')}>
-            <StampIcon />
-          </IconButton>
-          <span className="rule" />
-          <IconButton label="Random field" keyHint="S" onClick={() => stageRef.current?.randomize(density / 100)}>
-            <SeedIcon />
-          </IconButton>
-          <IconButton label="Clear" keyHint="C" onClick={() => stageRef.current?.clear()}>
-            <ClearIcon />
-          </IconButton>
-        </aside>
+        {onTorus && (
+          <button
+            className={donut ? 'view-toggle active' : 'view-toggle'}
+            aria-label={donut ? 'Flat view' : '3D donut'}
+            aria-pressed={donut}
+            title={`${donut ? 'Flat view' : '3D donut'} (D)`}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => setDonutOn(!donutOn)}
+          >
+            3D
+          </button>
+        )}
 
-        <aside className="panel settings" aria-label="Settings">
+        {!donut && (
+          <aside className="panel tools" aria-label="Tools">
+            <IconButton label="Brush" keyHint="B" active={tool === 'brush'} onClick={() => pickTool('brush')}>
+              <BrushIcon />
+            </IconButton>
+            <IconButton label="Eraser" keyHint="E" active={tool === 'eraser'} onClick={() => pickTool('eraser')}>
+              <EraserIcon />
+            </IconButton>
+            <IconButton label="Move" keyHint="H" active={tool === 'hand'} onClick={() => pickTool('hand')}>
+              <HandIcon />
+            </IconButton>
+            <IconButton label="Patterns" keyHint="P" active={tool === 'stamp'} onClick={() => toggleSection('patterns')}>
+              <StampIcon />
+            </IconButton>
+            <span className="rule" />
+            <IconButton label="Random field" keyHint="S" onClick={() => stageRef.current?.randomize(density / 100)}>
+              <SeedIcon />
+            </IconButton>
+            <IconButton label="Clear" keyHint="C" onClick={() => stageRef.current?.clear()}>
+              <ClearIcon />
+            </IconButton>
+          </aside>
+        )}
+
+        {donut && (
+          <aside className="panel settings donut-panel" aria-label="3D view">
+            <span className="caption">3D donut</span>
+            <p className="note">Drag to turn, scroll to zoom. Drawing and all settings are in the flat view. Cells stretch on the outside of the ring and shrink on the inside, as a flat torus cannot be bent into a ring without distortion.</p>
+            <div className="chips">
+              <button className="chip" onMouseDown={(e) => e.preventDefault()} onClick={() => setDonutOn(false)}>
+                Back to flat view
+              </button>
+            </div>
+          </aside>
+        )}
+        {/* Hidden rather than removed, so that links and pasted text stay. */}
+        <aside className="panel settings" aria-label="Settings" style={donut ? { display: 'none' } : undefined}>
           <PanelSection title="Tile" readout={isHat ? (HAT_SHAPES.find((s) => s.degrees === tile.morph)?.name ?? `${tile.morph}\u00b0`) : (tile.preset ?? 'Custom')} open={open === 'tile'} onToggle={() => toggleSection('tile')}>
             <TilePanel state={tile} onChange={setTile} />
             {isHat && capped && <p className="note warn">The cell limit of this browser tab is reached, so the field ends here.</p>}
@@ -477,7 +517,7 @@ export function App() {
           </dl>
         </footer>
 
-        <p className={empty && tool !== 'stamp' ? 'hint' : 'hint gone'}>Draw on the field, press S for a random start, or pick a pattern.</p>
+        <p className={empty && tool !== 'stamp' && !donut ? 'hint' : 'hint gone'}>Draw on the field, press S for a random start, or pick a pattern.</p>
       </div>
     </>
   );

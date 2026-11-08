@@ -26,6 +26,7 @@ void main() {
 }`;
 
 const LOOKUP_SIZE = 512;
+const FIELD_OF_VIEW = 40;
 const MAX_VERTICES = 24;
 const MAX_POLYGONS = 4;
 
@@ -85,21 +86,17 @@ void main() {
   color = vec4(128.0 / 255.0, 128.0 / 255.0, 0.0, 0.0);
 }`;
 
-const DISPLAY = /* glsl */ `#version 300 es
+/** What a point of the field looks like, shared by the flat view and the donut. */
+const FIELD = /* glsl */ `
 precision highp float;
 precision highp int;
 uniform highp sampler2D u_lookup;
 uniform sampler2D u_frame;
 uniform sampler2D u_glow;
-uniform vec2 u_resolution;
-uniform float u_scale;      // device pixels per world unit
-uniform mat2 u_worldToLattice;
-uniform vec2 u_latticeFraction;  // fractional lattice position of the screen centre
-uniform ivec2 u_base;       // grid cell of its lattice point, relative to the window
+uniform ivec2 u_base;       // added to a cell's grid position to get it relative to the window
 uniform ivec2 u_g1;
 uniform ivec2 u_g2;
 uniform int u_level;
-uniform float u_grid;       // grid line opacity
 uniform ivec2 u_hover;      // relative to the window
 uniform float u_brush;      // squared brush radius in world units, negative when hidden
 uniform mat2 u_gridToWorld;
@@ -107,7 +104,6 @@ uniform sampler2D u_ghost;
 uniform ivec2 u_ghostAt;    // top left of the pattern preview, relative to the window
 uniform bool u_hasGhost;
 uniform ivec2 u_period;     // size of a torus in cells, zero on the plane
-uniform vec2 u_seamCenter;  // grid position of the screen centre, seen from a seam
 uniform mat2 u_worldToGrid;
 uniform float u_seam;       // seam line opacity
 out vec4 color;
@@ -128,15 +124,16 @@ ivec2 wrapped(ivec2 value) {
   return u_period.x > 0 ? ivec2(wrap(value.x, u_period.x), wrap(value.y, u_period.y)) : value;
 }
 
-void main() {
-  vec2 px = vec2(gl_FragCoord.x, u_resolution.y - gl_FragCoord.y) - u_resolution / 2.0;
-  vec2 lattice = u_latticeFraction + u_worldToLattice * (px / u_scale);
+// lattice: position in lattice periods. fromSeam: grid position relative to a seam.
+// scale: device pixels per world unit at this point.
+vec3 fieldColor(vec2 lattice, vec2 fromSeam, float scale) {
   vec2 whole = floor(lattice);
   ivec2 texel = min(ivec2((lattice - whole) * float(${LOOKUP_SIZE})), ivec2(${LOOKUP_SIZE - 1}));
   vec4 entry = texelFetch(u_lookup, texel, 0);
   ivec2 local = ivec2(round(entry.rg * 255.0)) - ivec2(128);
-  float dist = (round(entry.b * 255.0) * 256.0 + round(entry.a * 255.0)) / 65535.0 * u_scale;
+  float dist = (round(entry.b * 255.0) * 256.0 + round(entry.a * 255.0)) / 65535.0 * scale;
   ivec2 cell = local + int(whole.x) * u_g1 + int(whole.y) * u_g2 + u_base;
+  float grid = smoothstep(5.0, 13.0, scale);
 
   // On a torus the picture repeats, whichever copy of a cell is on screen.
   ivec2 t = wrapped(cell) >> u_level;
@@ -146,7 +143,7 @@ void main() {
   float glow = inside ? texelFetch(u_glow, t, 0).r : 0.0;
 
   vec3 c = PAPER;
-  c = mix(c, LINE, u_grid * (1.0 - smoothstep(0.0, 1.0, dist)));
+  c = mix(c, LINE, grid * (1.0 - smoothstep(0.0, 1.0, dist)));
   c = mix(c, TRAIL, 0.5 * glow * glow);
   if (u_brush >= 0.0) {
     ivec2 apart = wrapped(cell - u_hover);
@@ -158,7 +155,7 @@ void main() {
   // Coverage below one cell per texel still has to read as something being there.
   // Outlines stay faintly visible through live cells, which separates them and
   // hides the stair steps of slanted edges.
-  c = mix(c, INK, sqrt(live) * (1.0 - 0.35 * u_grid * (1.0 - smoothstep(0.0, 1.0, dist))));
+  c = mix(c, INK, sqrt(live) * (1.0 - 0.35 * grid * (1.0 - smoothstep(0.0, 1.0, dist))));
   if (u_hasGhost) {
     ivec2 g = wrapped(cell - u_ghostAt);
     if (all(greaterThanEqual(g, ivec2(0))) && all(lessThan(g, textureSize(u_ghost, 0)))) {
@@ -166,14 +163,80 @@ void main() {
     }
   }
   if (u_seam > 0.0) {
-    vec2 g = u_seamCenter + u_worldToGrid * (px / u_scale);
-    vec2 off = g - vec2(u_period) * round(g / vec2(u_period));
+    vec2 off = fromSeam - vec2(u_period) * round(fromSeam / vec2(u_period));
     // Grid units to device pixels, measured across each family of lines.
     vec2 perUnit = vec2(length(vec2(u_worldToGrid[0][0], u_worldToGrid[1][0])), length(vec2(u_worldToGrid[0][1], u_worldToGrid[1][1])));
-    vec2 away = abs(off) * u_scale / perUnit;
+    vec2 away = abs(off) * scale / perUnit;
     c = mix(c, GHOST, u_seam * (1.0 - smoothstep(0.5, 1.5, min(away.x, away.y))));
   }
-  color = vec4(c, 1.0);
+  return c;
+}`;
+
+const DISPLAY = /* glsl */ `#version 300 es
+${FIELD}
+uniform vec2 u_resolution;
+uniform float u_scale;      // device pixels per world unit
+uniform mat2 u_worldToLattice;
+uniform vec2 u_latticeFraction;  // fractional lattice position of the screen centre
+uniform vec2 u_seamCenter;  // grid position of the screen centre, seen from a seam
+
+void main() {
+  vec2 px = vec2(gl_FragCoord.x, u_resolution.y - gl_FragCoord.y) - u_resolution / 2.0;
+  vec2 world = px / u_scale;
+  color = vec4(fieldColor(u_latticeFraction + u_worldToLattice * world, u_seamCenter + u_worldToGrid * world, u_scale), 1.0);
+}`;
+
+const DONUT_U = 320;
+const DONUT_V = 160;
+
+/** A ring around the z axis, built from the vertex number alone. */
+const DONUT_VERTEX = /* glsl */ `#version 300 es
+precision highp float;
+precision highp int;
+uniform mat4 u_transform;
+uniform float u_minor;
+out vec2 v_uv;
+out vec3 v_normal;
+out vec3 v_position;
+const float TAU = 6.283185307179586;
+const ivec2 CORNERS[6] = ivec2[6](ivec2(0, 0), ivec2(1, 0), ivec2(1, 1), ivec2(0, 0), ivec2(1, 1), ivec2(0, 1));
+void main() {
+  int quad = gl_VertexID / 6;
+  ivec2 at = ivec2(quad % ${DONUT_U}, quad / ${DONUT_U}) + CORNERS[gl_VertexID % 6];
+  v_uv = vec2(at) / vec2(${DONUT_U}.0, ${DONUT_V}.0);
+  float around = TAU * v_uv.x;
+  float tube = TAU * v_uv.y;
+  vec3 out_ = vec3(cos(around), sin(around), 0.0);
+  v_normal = cos(tube) * out_ + vec3(0.0, 0.0, sin(tube));
+  v_position = out_ + u_minor * v_normal;
+  gl_Position = u_transform * vec4(v_position, 1.0);
+}`;
+
+const DONUT = /* glsl */ `#version 300 es
+${FIELD}
+in vec2 v_uv;
+in vec3 v_normal;
+in vec3 v_position;
+uniform vec2 u_size;        // field size in cells
+uniform bool u_swap;        // whether the field's height runs around the ring
+uniform vec2 u_seamShift;   // grid position of the seam
+uniform mat2 u_gridToLattice;
+uniform vec3 u_eye;
+uniform vec3 u_light;
+
+void main() {
+  // Seen from outside, the ring runs to the right and the tube upwards. The field's
+  // x runs to the right and y downwards, and neither mapping may mirror it.
+  vec2 fromSeam = u_swap ? vec2(v_uv.y * u_size.x, v_uv.x * u_size.y) : vec2(v_uv.x * u_size.x, -v_uv.y * u_size.y);
+  vec2 grid = fromSeam + u_seamShift;
+  vec2 world = u_gridToWorld * grid;
+  float scale = 1.0 / max(max(length(dFdx(world)), length(dFdy(world))), 1e-6);
+  vec3 c = fieldColor(u_gridToLattice * grid, fromSeam, scale);
+
+  vec3 normal = normalize(v_normal);
+  float facing = max(dot(normal, normalize(u_eye - v_position)), 0.0);
+  float rim = pow(1.0 - facing, 3.0);
+  color = vec4(c * (0.8 + 0.2 * max(dot(normal, u_light), 0.0)) - 0.1 * rim, 1.0);
 }`;
 
 function compile(gl: WebGL2RenderingContext, vertex: string, fragment: string) {
@@ -218,10 +281,32 @@ export interface View {
   torus: TorusSize | null;
 }
 
+export interface DonutView {
+  torus: TorusSize;
+  /** Turn around the ring's axis, and tilt towards the viewer, in radians. */
+  yaw: number;
+  pitch: number;
+  zoom: number;
+}
+
+type Mat4 = number[];
+
+/** Column by column, as WebGL wants it. */
+function multiply(a: Mat4, b: Mat4): Mat4 {
+  const out = new Array<number>(16).fill(0);
+  for (let column = 0; column < 4; column++) {
+    for (let row = 0; row < 4; row++) {
+      for (let k = 0; k < 4; k++) out[column * 4 + row] += a[k * 4 + row] * b[column * 4 + k];
+    }
+  }
+  return out;
+}
+
 export class Renderer {
   readonly gl: WebGL2RenderingContext;
   readonly emptyVao: WebGLVertexArrayObject;
   private display;
+  private donut;
   private glow;
   private lookupProgram;
   private framebuffer: WebGLFramebuffer;
@@ -244,6 +329,7 @@ export class Renderer {
     if (!gl) throw new Error('WebGL2 is not available');
     this.gl = gl;
     this.display = compile(gl, FULLSCREEN, DISPLAY);
+    this.donut = compile(gl, DONUT_VERTEX, DONUT);
     this.glow = compile(gl, FULLSCREEN, GLOW);
     this.lookupProgram = compile(gl, FULLSCREEN, LOOKUP);
     this.framebuffer = gl.createFramebuffer()!;
@@ -395,6 +481,39 @@ export class Renderer {
     gl.uniform1i(program.uniform('u_glow'), 1);
   }
 
+  /** Everything both views need to look up the field. */
+  private bindField(
+    program: Renderer['display'],
+    tiling: Tiling,
+    options: { base: Vec; torus: TorusSize | null; seam: number; hover?: View['hover']; ghostAt?: View['ghostAt'] },
+  ) {
+    const { gl, window: w } = this;
+    const textures = [
+      ['u_lookup', this.lookup],
+      ['u_frame', this.frame],
+      ['u_glow', this.trailA],
+      ['u_ghost', this.ghost],
+    ] as const;
+    textures.forEach(([name, layer], i) => {
+      gl.activeTexture(gl.TEXTURE0 + i);
+      gl.bindTexture(gl.TEXTURE_2D, layer.texture);
+      gl.uniform1i(program.uniform(name), i);
+    });
+    const { hover, ghostAt, torus } = options;
+    gl.uniform2i(program.uniform('u_base'), options.base[0], options.base[1]);
+    gl.uniform2i(program.uniform('u_g1'), tiling.g1[0], tiling.g1[1]);
+    gl.uniform2i(program.uniform('u_g2'), tiling.g2[0], tiling.g2[1]);
+    gl.uniform1i(program.uniform('u_level'), w.level);
+    gl.uniform2i(program.uniform('u_hover'), hover ? hover.x - w.ox : 0, hover ? hover.y - w.oy : 0);
+    gl.uniform1f(program.uniform('u_brush'), hover ? hover.reach : -1);
+    gl.uniformMatrix2fv(program.uniform('u_gridToWorld'), false, tiling.gridToWorld);
+    gl.uniform1i(program.uniform('u_hasGhost'), ghostAt ? 1 : 0);
+    gl.uniform2i(program.uniform('u_ghostAt'), ghostAt ? ghostAt.x - w.ox : 0, ghostAt ? ghostAt.y - w.oy : 0);
+    gl.uniform2i(program.uniform('u_period'), torus?.width ?? 0, torus?.height ?? 0);
+    gl.uniformMatrix2fv(program.uniform('u_worldToGrid'), false, tiling.worldToGrid);
+    gl.uniform1f(program.uniform('u_seam'), options.seam);
+  }
+
   draw(view: View, deltaMs: number) {
     const { gl, canvas, display, window: w, tiling } = this;
     if (!tiling) return;
@@ -412,16 +531,21 @@ export class Renderer {
 
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.useProgram(display.program);
-    const textures = [
-      ['u_lookup', this.lookup],
-      ['u_frame', this.frame],
-      ['u_glow', this.trailA],
-      ['u_ghost', this.ghost],
-    ] as const;
-    textures.forEach(([name, layer], i) => {
-      gl.activeTexture(gl.TEXTURE0 + i);
-      gl.bindTexture(gl.TEXTURE_2D, layer.texture);
-      gl.uniform1i(display.uniform(name), i);
+    const torus = view.torus;
+    let seam = 0;
+    if (torus) {
+      const [a, b, c, d] = gridToWorld;
+      const periodPixels = view.scale * Math.min(Math.hypot(a, b) * torus.width, Math.hypot(c, d) * torus.height);
+      // Lines would only clutter a field that has shrunk to a few pixels.
+      seam = 0.4 * Math.min(1, Math.max(0, (periodPixels - 12) / 36));
+      gl.uniform2f(display.uniform('u_seamCenter'), modulo(view.centerX - this.seam[0], torus.width), modulo(view.centerY - this.seam[1], torus.height));
+    }
+    this.bindField(display, tiling, {
+      base: [wholeU * g1[0] + wholeV * g2[0] - w.ox, wholeU * g1[1] + wholeV * g2[1] - w.oy],
+      torus,
+      seam,
+      hover: view.hover,
+      ghostAt: view.ghostAt,
     });
     gl.uniform2f(display.uniform('u_resolution'), canvas.width, canvas.height);
     gl.uniform1f(display.uniform('u_scale'), view.scale);
@@ -432,35 +556,62 @@ export class Renderer {
       t1[0] / worldDeterminant,
     ]);
     gl.uniform2f(display.uniform('u_latticeFraction'), latticeU - wholeU, latticeV - wholeV);
-    gl.uniform2i(display.uniform('u_base'), wholeU * g1[0] + wholeV * g2[0] - w.ox, wholeU * g1[1] + wholeV * g2[1] - w.oy);
-    gl.uniform2i(display.uniform('u_g1'), g1[0], g1[1]);
-    gl.uniform2i(display.uniform('u_g2'), g2[0], g2[1]);
-    gl.uniform1i(display.uniform('u_level'), w.level);
-    const grid = Math.min(1, Math.max(0, (view.scale - 5) / 8));
-    gl.uniform1f(display.uniform('u_grid'), grid * grid * (3 - 2 * grid));
-    const hover = view.hover;
-    gl.uniform2i(display.uniform('u_hover'), hover ? hover.x - w.ox : 0, hover ? hover.y - w.oy : 0);
-    gl.uniform1f(display.uniform('u_brush'), hover ? hover.reach : -1);
-    gl.uniformMatrix2fv(display.uniform('u_gridToWorld'), false, gridToWorld);
-    gl.uniform1i(display.uniform('u_hasGhost'), view.ghostAt ? 1 : 0);
-    gl.uniform2i(display.uniform('u_ghostAt'), view.ghostAt ? view.ghostAt.x - w.ox : 0, view.ghostAt ? view.ghostAt.y - w.oy : 0);
-    const torus = view.torus;
-    gl.uniform2i(display.uniform('u_period'), torus?.width ?? 0, torus?.height ?? 0);
-    gl.uniformMatrix2fv(display.uniform('u_worldToGrid'), false, tiling.worldToGrid);
-    if (torus) {
-      const [a, b, c, d] = gridToWorld;
-      const periodPixels = view.scale * Math.min(Math.hypot(a, b) * torus.width, Math.hypot(c, d) * torus.height);
-      // Lines would only clutter a field that has shrunk to a few pixels.
-      gl.uniform1f(display.uniform('u_seam'), 0.4 * Math.min(1, Math.max(0, (periodPixels - 12) / 36)));
-      gl.uniform2f(
-        display.uniform('u_seamCenter'),
-        modulo(view.centerX - this.seam[0], torus.width),
-        modulo(view.centerY - this.seam[1], torus.height),
-      );
-    } else {
-      gl.uniform1f(display.uniform('u_seam'), 0);
-    }
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
+  /** The torus as a ring in space, which needs the whole field in the frame texture. */
+  drawDonut(view: DonutView, deltaMs: number) {
+    const { gl, canvas, donut: program, window: w, tiling } = this;
+    if (!tiling) return;
+    this.advanceTrail(deltaMs);
+
+    // The longer side runs around the ring, and the tube follows the proportions of
+    // the field as far as a ring can: too thick closes the hole, too thin looks like wire.
+    const { torus } = view;
+    const [gxx, gxy, gyx, gyy] = tiling.gridToWorld;
+    const across = Math.hypot(gxx, gxy) * torus.width;
+    const down = Math.hypot(gyx, gyy) * torus.height;
+    const swap = down > across;
+    const minor = Math.min(0.45, Math.max(0.18, Math.min(across, down) / Math.max(across, down)));
+
+    const aspect = canvas.width / canvas.height;
+    const tangent = Math.tan((FIELD_OF_VIEW * Math.PI) / 360);
+    const reach = 1 + minor;
+    const distance = Math.max(((1.15 * reach) / (tangent * Math.min(1, aspect))) / view.zoom, reach + 0.12);
+    const near = 0.02;
+    const far = distance + 2 * reach;
+    const perspective: Mat4 = [1 / (tangent * aspect), 0, 0, 0, 0, 1 / tangent, 0, 0, 0, 0, (far + near) / (near - far), -1, 0, 0, (2 * far * near) / (near - far), 0];
+    const [sinY, cosY] = [Math.sin(view.yaw), Math.cos(view.yaw)];
+    const [sinP, cosP] = [Math.sin(view.pitch), Math.cos(view.pitch)];
+    const turn: Mat4 = [cosY, sinY, 0, 0, -sinY, cosY, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    const tilt: Mat4 = [1, 0, 0, 0, 0, cosP, sinP, 0, 0, -sinP, cosP, 0, 0, 0, 0, 1];
+    const rotation = multiply(tilt, turn);
+    const away: Mat4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -distance, 1];
+    // A rotation's inverse is its transpose, which takes camera directions into the model.
+    const intoModel = (x: number, y: number, z: number) => [0, 1, 2].map((i) => rotation[i * 4] * x + rotation[i * 4 + 1] * y + rotation[i * 4 + 2] * z);
+
+    const { g1, g2 } = tiling;
+    const determinant = g1[0] * g2[1] - g1[1] * g2[0];
+    gl.bindVertexArray(this.emptyVao);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(1, 1, 1, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.useProgram(program.program);
+    this.bindField(program, tiling, { base: [-w.ox, -w.oy], torus, seam: 0.3 });
+    gl.uniformMatrix4fv(program.uniform('u_transform'), false, multiply(perspective, multiply(away, rotation)));
+    gl.uniform1f(program.uniform('u_minor'), minor);
+    gl.uniform2f(program.uniform('u_size'), torus.width, torus.height);
+    gl.uniform1i(program.uniform('u_swap'), swap ? 1 : 0);
+    gl.uniform2f(program.uniform('u_seamShift'), this.seam[0], this.seam[1]);
+    gl.uniformMatrix2fv(program.uniform('u_gridToLattice'), false, [g2[1] / determinant, -g1[1] / determinant, -g2[0] / determinant, g1[0] / determinant]);
+    const [ex, ey, ez] = intoModel(0, 0, distance);
+    gl.uniform3f(program.uniform('u_eye'), ex, ey, ez);
+    const length = Math.hypot(-0.4, 0.7, 0.6);
+    const [lx, ly, lz] = intoModel(-0.4 / length, 0.7 / length, 0.6 / length);
+    gl.uniform3f(program.uniform('u_light'), lx, ly, lz);
+    gl.drawArrays(gl.TRIANGLES, 0, DONUT_U * DONUT_V * 6);
+    gl.disable(gl.DEPTH_TEST);
   }
 }
 

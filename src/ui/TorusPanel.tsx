@@ -69,7 +69,7 @@ export function TorusPanel(props: { on: boolean; size: TorusSize; onToggle: (on:
             <SideInput label="Width" value={size.width} onCommit={(width) => onResize({ ...size, width })} />
             <SideInput label="Height" value={size.height} onCommit={(height) => onResize({ ...size, height })} />
           </div>
-          <p className="note">Opposite edges touch, so whatever leaves comes back. Each field keeps its own cells. Shrinking drops what no longer fits. Birth with 0 neighbours is allowed here.</p>
+          <p className="note">Opposite edges touch, so whatever leaves comes back. Each field keeps its own cells. Shrinking drops what no longer fits. Birth with 0 neighbours is allowed here. Press D or use the 3D button at the top for a view as a ring.</p>
         </>
       )}
     </>

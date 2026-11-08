@@ -20,6 +20,10 @@ const HAT_STROKE_STEP = 0.5;
 
 /** Fraction of the screen that a torus fills after fitting it in. */
 const TORUS_FIT = 0.9;
+const MIN_DONUT_ZOOM = 0.5;
+const MAX_DONUT_ZOOM = 4;
+/** Radians per device pixel of dragging, at the normal distance. */
+const DONUT_TURN = 0.006;
 
 interface Point {
   x: number;
@@ -75,6 +79,11 @@ export class Stage {
   private nextExport = 0;
   private exports = new Map<number, (m: Extract<FromWorker, { t: 'cells' }>) => void>();
   private fitPending = false;
+  /** Shows the torus as a ring. This view only looks, nothing can be drawn in it. */
+  private donut = false;
+  private donutYaw = -0.5;
+  private donutPitch = -1;
+  private donutZoom = 1;
 
   /** Set while the hat tiling is showing; `hat` exists once the worker built it. */
   private hatMode = false;
@@ -97,7 +106,7 @@ export class Stage {
   private lastTime = 0;
 
   private pointers = new Map<number, Point>();
-  private dragMode: 'paint' | 'pan' | 'pinch' | null = null;
+  private dragMode: 'paint' | 'pan' | 'pinch' | 'orbit' | null = null;
   private paintAlive = true;
   private lastCell: Point | null = null;
   private lastPan: Point = { x: 0, y: 0 };
@@ -193,6 +202,14 @@ export class Stage {
     this.topology = -1;
     this.renderer.resetTrail();
     this.send({ t: 'surface', hat, torus: next });
+    this.viewChanged();
+  }
+
+  setDonut(donut: boolean) {
+    if (donut === this.donut) return;
+    this.donut = donut;
+    // The frame window jumps, so old afterglow would land in the wrong place.
+    this.renderer.resetTrail();
     this.viewChanged();
   }
 
@@ -384,6 +401,15 @@ export class Stage {
       return;
     }
     if (!this.tiling) return;
+    if (this.donut && this.torus) {
+      // All of the field is in view at once, so all of it has to be in the frame.
+      const { width, height } = this.torus;
+      const budget = MAX_TEXELS_PER_PIXEL * this.canvas.width * this.canvas.height;
+      let level = 0;
+      while ((width * height) / 4 ** level > budget) level++;
+      this.sendFrame(0, 0, Math.ceil(width / 2 ** level), Math.ceil(height / 2 ** level), level);
+      return;
+    }
     const view = this.visibleCells();
     // Overscan keeps the picture filled while panning ahead of the next frame.
     const margin = Math.max(view.width, view.height) / 8;
@@ -410,6 +436,10 @@ export class Stage {
         height = Math.ceil(this.torus.height / texel);
       }
     }
+    this.sendFrame(ox, oy, width, height, level);
+  }
+
+  private sendFrame(ox: number, oy: number, width: number, height: number, level: number) {
     const spare = this.spare;
     this.spare = null;
     this.frameInFlight = true;
@@ -428,6 +458,13 @@ export class Stage {
         this.renderer.advanceTrail(delta);
         const hover = this.hatHover === null || this.tool === 'hand' ? null : { id: this.hatHover, reach: this.tool === 'stamp' ? 0 : brushReach(this.brushRadius) };
         this.hat.draw(this.renderer, this.hatCenter, this.cellSize, hover);
+      }
+      return;
+    }
+    if (this.donut && this.torus) {
+      if (this.needsDraw || this.renderer.animating) {
+        this.needsDraw = false;
+        this.renderer.drawDonut({ torus: this.torus, yaw: this.donutYaw, pitch: this.donutPitch, zoom: this.donutZoom }, delta);
       }
       return;
     }
@@ -587,7 +624,14 @@ export class Stage {
   private wheel(e: WheelEvent) {
     e.preventDefault();
     const lines = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : 1;
-    this.zoomAt(this.device(e), Math.exp(-e.deltaY * lines * (e.ctrlKey ? 0.01 : 0.0018)));
+    const factor = Math.exp(-e.deltaY * lines * (e.ctrlKey ? 0.01 : 0.0018));
+    if (this.donut) this.zoomDonut(factor);
+    else this.zoomAt(this.device(e), factor);
+  }
+
+  private zoomDonut(factor: number) {
+    this.donutZoom = clamp(this.donutZoom * factor, MIN_DONUT_ZOOM, MAX_DONUT_ZOOM);
+    this.viewChanged();
   }
 
   // Pointer input
@@ -601,6 +645,11 @@ export class Stage {
       this.dragMode = 'pinch';
       this.pinch = this.measurePinch();
       this.setHover(null);
+      return;
+    }
+    if (this.donut) {
+      this.dragMode = 'orbit';
+      this.lastPan = p;
       return;
     }
     const wantsPan = this.tool === 'hand' || e.button === 1 || e.button === 2 || e.shiftKey;
@@ -639,6 +688,10 @@ export class Stage {
   private pointerMove(e: PointerEvent) {
     const p = this.device(e);
     if (this.pointers.has(e.pointerId)) this.pointers.set(e.pointerId, p);
+    if (this.donut) {
+      this.donutPointerMove(p);
+      return;
+    }
     if (this.hatMode) {
       this.hatPointerMove(p, e.pointerType === 'mouse');
       return;
@@ -666,6 +719,20 @@ export class Stage {
         break;
     }
     if (e.pointerType === 'mouse') this.setHover(cell);
+  }
+
+  private donutPointerMove(p: Point) {
+    if (this.dragMode === 'pinch' && this.pointers.size >= 2) {
+      const next = this.measurePinch();
+      this.zoomDonut(next.distance / this.pinch.distance);
+      this.pinch = next;
+    } else if (this.dragMode === 'orbit') {
+      const turn = DONUT_TURN / this.donutZoom;
+      this.donutYaw += (p.x - this.lastPan.x) * turn;
+      this.donutPitch += (p.y - this.lastPan.y) * turn;
+      this.lastPan = p;
+      this.viewChanged();
+    }
   }
 
   private hatPointerMove(p: Point, isMouse: boolean) {

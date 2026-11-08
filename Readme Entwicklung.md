@@ -1,6 +1,6 @@
 # Game of Emergence: Entwicklung
 
-Stand: 8. November 2026, nach Schritt 4 von ursprünglich 5, ergänzt um den Hat-Glider, den Torus und das Teilen per Link.
+Stand: 8. November 2026, nach Schritt 4 von ursprünglich 5, ergänzt um den Hat-Glider, den Torus, das Teilen per Link und den 3D-Donut.
 
 Dieses Dokument hält fest, was gebaut wurde, warum es so gebaut ist und was als Nächstes ansteht. Installation und Bedienung stehen in der [Readme.md](Readme.md).
 
@@ -28,7 +28,7 @@ Rust/WASM-Engine (engine/src/)
 | `engine/src/lib.rs` | C-ABI-Exporte für den Worker |
 | `src/sim/worker.ts`, `protocol.ts` | Simulationsschleife, Nachrichten zwischen Stage und Worker |
 | `src/tiles/tiles.ts` | Periodische Kachelungen, Vorlagen, Regelvorschläge |
-| `src/render/renderer.ts` | Periodisches Feld und Nachglühen |
+| `src/render/renderer.ts` | Periodisches Feld, 3D-Donut und Nachglühen |
 | `src/render/HatScene.ts` | Hat-Kacheln als Instanzen, Zellsuche |
 | `src/patterns/` | Musterbibliothek als JSON, RLE lesen und schreiben, Regeln als Text |
 | `src/share/link.ts` | Feldzustand als URL-Fragment, Prüfung eingehender Links |
@@ -63,6 +63,10 @@ Felder fester Größe für alle periodischen Gitter, siehe „Torus“.
 ### Nachtrag: Teilen per Link und RLE
 
 Links mit Einstellungen und Zellen, dazu RLE-Import und -Export, siehe „Teilen per Link“.
+
+### Nachtrag: 3D-Donut
+
+Der Torus als drehbarer Ring, nur zum Anschauen, siehe „3D-Donut“.
 
 ## Designentscheidungen
 
@@ -125,6 +129,20 @@ Ein Torus ist ein eigenes `World`-Objekt neben der Ebene. Beide behalten beim We
 
 **Rendering:** Der Worker liefert höchstens eine Periode, den Rest wiederholt der Shader durch Umwickeln der Zellkoordinaten. Die Tapete kostet also nichts zusätzlich, unabhängig vom Zoom. Die Grenzlinie ist eine Gerade in Gitterkoordinaten. Bei Dreiecken und schrägen Formen läuft sie deshalb durch Zellen, statt ihren Kanten zu folgen. Das ist nur Anzeige, die Simulation betrifft es nicht.
 
+### 3D-Donut
+
+Der Donut ist eine reine Ansicht. Solange er aktiv ist, sind Werkzeuge, Einstellungen und ihre Tasten aus. Play, Pause, Einzelschritt und Tempo bleiben. Der Abschnitt mit den Einstellungen wird nur ausgeblendet, damit erzeugte Links und eingefügter Text erhalten bleiben.
+
+**Gemeinsamer Shader:** Die Zellfarbe (`fieldColor`) nutzen flache Ansicht und Donut gemeinsam, also auch Nachschlagetextur, Nachglühen und Naht. Nur die Frage, welche Feldposition ein Pixel zeigt, beantworten beide verschieden. Auf dem Donut kommt die Pixelgröße für die Gitterlinien aus den Ableitungen im Shader, weil sie sich über die Fläche ändert. Das Netz aus 320×160 Vierecken entsteht allein aus der Vertex-Nummer.
+
+**Daten:** Der Donut zeigt immer das ganze Feld, also holt `Stage` eine volle Periode vom Worker. Die Stufe (`level`) folgt aus demselben Texel-Budget wie in der flachen Ansicht.
+
+**Proportionen:** Die längere Feldseite läuft um den Ring. Das Rohr folgt dem Seitenverhältnis, begrenzt auf 0,18 bis 0,45 des Ringradius, weil es sonst das Loch schließt oder wie Draht aussieht. Ein quadratisches Feld ergibt also einen dicken Ring.
+
+**Keine Spiegelung:** Von außen betrachtet laufen Ring und Rohr nach rechts und oben, das Feld aber nach rechts und unten. Die Abbildung in `DONUT` berücksichtigt das in beiden Fällen, also auch wenn Breite und Höhe die Rollen tauschen. Geprüft ist das im Browser mit einer L-Form.
+
+**Verzerrung ist unvermeidlich:** Ein flacher Torus passt nicht verzerrungsfrei in den 3D-Raum. Außen werden Zellen gestreckt, innen gestaucht. Schräge Kacheln wie Hexagone erscheinen zusätzlich gestaucht und geschert, weil das schräge Feld auf die rechtwinkligen Richtungen von Ring und Rohr abgebildet wird. Die Topologie stimmt trotzdem: Nachbarn bleiben Nachbarn.
+
 ### Teilen per Link
 
 Die Seite hat keinen Server, also steckt alles im URL-Fragment (`#v=1&p=Square&r=B3/S23&c=0,0,14&a=100,50,bo-2bo-3o`). Fragmente gehen nie an einen Webserver. Das Feld `v` trägt die Formatversion.
@@ -147,6 +165,8 @@ Geöffnete Links stehen immer pausiert bei Generation 0, der Zählerstand wird n
 **Links sind fremde Eingaben.** `parseLink` prüft jeden Wert und meldet Verworfenes in der Oberfläche, der Rest des Links gilt weiter. Begrenzt sind Größen, Koordinaten, Zellzahl (2 Millionen) und die entpackte Länge (16 MB), damit ein kurzer Link nicht den Tab lahmlegt. Unbekannte Versionen werden ganz ignoriert.
 
 **RLE-Import:** Kommentare und Kopfzeile sind optional, die alte Form `23/3` und der Zusatz `:T100,100` werden verstanden. Bringt das Muster eine Regel mit, wird sie aktiv. Mehrzustandsmuster und nicht-totalistische Regeln werden mit einer Meldung abgelehnt. Der Export schreibt die Torus-Größe so in die Regel, wie Golly es tut.
+
+**Oberfläche:** Link und RLE liegen gemeinsam im Abschnitt „Share & export“, auch der Import, weil er sich mit dem Export ein Textfeld teilt. Unter „Patterns“ hätte den Export niemand gesucht, dort steht nur noch ein Verweis auf den Import.
 
 ### Rendering über eine Nachschlagetextur
 
@@ -239,7 +259,7 @@ Weiß, luftig, Haarlinien. Die Panels blenden beim Lauf aus und kommen bei Mausb
 ## Tests
 
 ```
-npm test        # Engine-Tests, Musterbibliothek, Kachel-Geometrie
+npm test        # Engine-Tests, Musterbibliothek, Kachel-Geometrie, Hat-Glider, Links und RLE
 npm run bench   # Geschwindigkeit
 ```
 
@@ -251,10 +271,9 @@ Letzter Stand: alle grün, mit einer Einschränkung: `npm test` brach am 8. Nove
 - **`check-patterns.mjs`:** Simuliert alle 24 Muster und prüft Periode, Verschiebung und Wachstum. R-Pentomino und Acorn erreichen ihre aus der Literatur bekannten Endpopulationen 116 und 633.
 - **`check-tiles.mjs`:** Liest die Nachbarn geometrisch aus den Polygonen ab und vergleicht das Ergebnis einer davon gesteuerten naiven Simulation mit der Engine. Prüft außerdem für alle Vorlagen, dass die Kacheln an der Naht eines Torus passen.
 - **`check-hat-glider.mjs`:** Fliegt Glider A von 11 Startkacheln und vergleicht Population, Richtung und Tempo mit dem Paper. Die langen Flüge laufen hier statt in den Engine-Tests, weil Node im WASI-Testaufbau bei solchen Läufen mit einem Speicherzugriffsfehler abbricht. Direkt als WASM läuft derselbe Code sauber, die Ursache ist nicht geklärt.
-
 - **`check-share.mjs`:** Rundläufe für RLE und Links über alle Vorlagen, dazu rund 30 fehlerhafte oder böswillige Eingaben, unter anderem eine Deflate-Bombe.
 
-Die Browsertests liefen mit Playwright und liegen nicht im Repository. Das gilt auch für den Torus. Er wurde in Headless-Chrome über das DevTools-Protokoll geprüft: alle Kachelfamilien, Malen über die Naht, Glider-Umlauf, B0, Wechsel zwischen den Feldern, 4096×4096. Beim Verschieben über die Naht stimmten die Bilder bis auf den Versatz pixelgenau überein. Links wurden dort ebenfalls geprüft: erzeugen, in einem frischen Tab öffnen, Bilder vergleichen. Auf Quadraten und Dreiecken war das pixelgenau, auf schrägen Hexagonen und dem Hat wichen bei gleicher Population höchstens 0,3 % der dunklen Pixel ab, vermutlich wegen der gerundeten Kameraposition.
+Die Browsertests liefen mit Playwright und liegen nicht im Repository. Das gilt auch für den Torus. Er wurde in Headless-Chrome über das DevTools-Protokoll geprüft: alle Kachelfamilien, Malen über die Naht, Glider-Umlauf, B0, Wechsel zwischen den Feldern, 4096×4096. Beim Verschieben über die Naht stimmten die Bilder bis auf den Versatz pixelgenau überein. Links wurden dort ebenfalls geprüft: erzeugen, in einem frischen Tab öffnen, Bilder vergleichen. Auf Quadraten und Dreiecken war das pixelgenau, auf schrägen Hexagonen und dem Hat wichen bei gleicher Population höchstens 0,3 % der dunklen Pixel ab, vermutlich wegen der gerundeten Kameraposition. Auch der Donut wurde dort geprüft: Seitenverhältnisse, Spiegelung, Drehen, Zoomen, gesperrte Tasten, Hexagone und Dreiecke, 4096×4096. Automatische Tests hat er keine.
 
 ## Bekannte Lücken
 
@@ -272,19 +291,21 @@ Die Browsertests liefen mit Playwright und liegen nicht im Repository. Das gilt 
 - **Perioden über 720 Generationen** erkennt die Statusanzeige auf der Ebene und dem Hat nicht. Auf dem Torus gilt die Grenze nur noch für die Periode der Population.
 - **Torus, weit herausgezoomt:** Am Rand einer Periode kann ein Texel etwas zu hell ausfallen, wenn die Seite kein Vielfaches der Texelgröße ist.
 - **Torus, große Felder:** 4096×4096 erreichte im Headless-Browser rund 130 Generationen pro Sekunde, die Engine allein in Node 156–183. Auf echter Hardware ist das noch nicht gemessen.
+- **Donut, große Felder:** Bei 4096×4096 lief die Simulation im Headless-Browser mit rund 37 Generationen pro Sekunde, in der flachen Ansicht mit rund 130. Wie viel davon am Software-Rendering liegt, ist auf echter Hardware noch zu messen. Bei sehr vielen Zellen pro Pixel flimmert das Bild zudem, weil einzelne Texel statt eines Mittelwerts gezeichnet werden.
+- **Donut im Link:** Ein Link öffnet immer die flache Ansicht, weder der Donut noch sein Blickwinkel werden übertragen.
 - **Kein automatischer WASM-Neubau.** Nach Änderungen an der Engine: `npm run wasm`, dann die Seite neu laden.
 
 ## Nächste Schritte
 
-1. **Torus als 3D-Ansicht (optional).** Ein drehbarer Donut, zunächst nur zum Anschauen, gemalt wird in 2D. Die Nachschlagetextur lässt sich auch auf einer gekrümmten Fläche nutzen. Die Zellen werden dabei verzerrt, weil ein flacher Torus nicht verzerrungsfrei in den 3D-Raum passt. Die Entscheidung dafür oder dagegen steht noch aus.
-2. **Pentagons.** Reguläre Fünfecke kacheln die Ebene nicht, es braucht also einen der kachelnden Typen, etwa die Kairo-Kachelung als Startpunkt.
+1. **Pentagons.** Reguläre Fünfecke kacheln die Ebene nicht, es braucht also einen der kachelnden Typen, etwa die Kairo-Kachelung als Startpunkt.
    - Eine Periode enthält vier Fünfecke. Der Renderer erlaubt schon heute 4 Polygone pro Periode mit zusammen 24 Ecken, das passt.
    - Die Engine unterscheidet bisher nur zwei Zellklassen über die Parität. Die Kairo-Kachelung braucht vermutlich vier (x und y modulo 2), `advance_general` muss also verallgemeinert werden.
    - Vor dem Bau klären: Welche Typen sollen verformbar sein, und wie viele Nachbarn ergeben sich? Das Prüfskript `check-tiles.mjs` kann die Tabellen wie bei den anderen Formen gegen die Geometrie absichern.
    - Für die Regeln ist wieder ein Suchlauf nötig.
-3. **Deployment** auf den eigenen Ubuntu-Server bei Hetzner (CX22). Die Seite ist statisch, der Server muss `.wasm` als `application/wasm` ausliefern. COOP/COEP-Header werden erst nötig, falls später WASM-Threads dazukommen.
-4. **Mehr Hat-Muster und Regeln.** Glider C (ein Dreifach-Glider) aus monotile-ca lässt sich wie Glider A übernehmen. *Worms* von Trevorrow und die Regel von Gabbay nur nach Klärung der Rechte, monotile-ca nutzt sie mit deren Erlaubnis. Dazu eine Kamera, die einem Muster folgt, und die in HatLife übliche größere Nachbarschaftsreichweite (`N2`).
-5. **Test auf echter Hardware.** GPU, Firefox, Safari und Touch, wie unter „Bekannte Lücken“ beschrieben.
+2. **Mehr Hat-Muster und Regeln.** Glider C (ein Dreifach-Glider) aus monotile-ca lässt sich wie Glider A übernehmen. *Worms* von Trevorrow und die Regel von Gabbay nur nach Klärung der Rechte, monotile-ca nutzt sie mit deren Erlaubnis. Dazu eine Kamera, die einem Muster folgt, und die in HatLife übliche größere Nachbarschaftsreichweite (`N2`).
+3. **Suchmodus.** Ein Modus, mit dem man auf den exotischeren Feldern, also vor allem auf den Einstein-Kacheln, nach Mustern suchen kann. Vorerst nur als Idee notiert, Umfang und Umsetzung sind noch offen.
+4. **Test auf echter Hardware.** GPU, Firefox, Safari und Touch, wie unter „Bekannte Lücken“ beschrieben.
+5. **Deployment** auf den eigenen Ubuntu-Server bei Hetzner (CX22). Die Seite ist statisch, der Server muss `.wasm` als `application/wasm` ausliefern. COOP/COEP-Header werden erst nötig, falls später WASM-Threads dazukommen. Erst danach funktionieren geteilte Links auch für andere. Der Server sollte HTTPS nutzen, sonst steht das automatische Kopieren in die Zwischenablage nicht zur Verfügung.
 6. **Mögliche Erweiterungen, noch nicht entschieden:**
    - echter chiraler Spectre mit eigener Substitution
    - Muster für Hexagone und Dreiecke suchen
