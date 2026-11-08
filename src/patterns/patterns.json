@@ -1,0 +1,30 @@
+[
+  { "id": "block", "name": "Block", "category": "Still lifes", "rle": "2o$2o!", "expect": { "kind": "still" } },
+  { "id": "beehive", "name": "Beehive", "category": "Still lifes", "rle": "b2o$o2bo$b2o!", "expect": { "kind": "still" } },
+  { "id": "loaf", "name": "Loaf", "category": "Still lifes", "rle": "b2o$o2bo$bobo$2bo!", "expect": { "kind": "still" } },
+  { "id": "boat", "name": "Boat", "category": "Still lifes", "rle": "2o$obo$bo!", "expect": { "kind": "still" } },
+
+  { "id": "blinker", "name": "Blinker", "category": "Oscillators", "rle": "3o!", "expect": { "kind": "oscillator", "period": 2 } },
+  { "id": "toad", "name": "Toad", "category": "Oscillators", "rle": "b3o$3o!", "expect": { "kind": "oscillator", "period": 2 } },
+  { "id": "beacon", "name": "Beacon", "category": "Oscillators", "rle": "2o$2o$2b2o$2b2o!", "expect": { "kind": "oscillator", "period": 2 } },
+  { "id": "pulsar", "name": "Pulsar", "category": "Oscillators", "rle": "2b3o3b3o2$o4bobo4bo$o4bobo4bo$o4bobo4bo$2b3o3b3o2$2b3o3b3o$o4bobo4bo$o4bobo4bo$o4bobo4bo2$2b3o3b3o!", "expect": { "kind": "oscillator", "period": 3 } },
+  { "id": "figure-eight", "name": "Figure eight", "category": "Oscillators", "rle": "3o$3o$3o$3b3o$3b3o$3b3o!", "expect": { "kind": "oscillator", "period": 8 } },
+  { "id": "galaxy", "name": "Kok's galaxy", "category": "Oscillators", "rle": "6ob2o$6ob2o$7b2o$2o5b2o$2o5b2o$2o5b2o$2o$2ob6o$2ob6o!", "expect": { "kind": "oscillator", "period": 8 } },
+  { "id": "pentadecathlon", "name": "Pentadecathlon", "category": "Oscillators", "rle": "2bo4bo$2ob4ob2o$2bo4bo!", "expect": { "kind": "oscillator", "period": 15 } },
+
+  { "id": "glider", "name": "Glider", "category": "Spaceships", "rle": "bo$2bo$3o!", "expect": { "kind": "spaceship", "period": 4, "dx": 1, "dy": 1 } },
+  { "id": "lwss", "name": "Lightweight spaceship", "category": "Spaceships", "rle": "bo2bo$o$o3bo$4o!", "expect": { "kind": "spaceship", "period": 4, "dx": -2, "dy": 0 } },
+  { "id": "mwss", "name": "Middleweight spaceship", "category": "Spaceships", "rle": "3bo$bo3bo$o$o4bo$5o!", "expect": { "kind": "spaceship", "period": 4, "dx": -2, "dy": 0 } },
+  { "id": "hwss", "name": "Heavyweight spaceship", "category": "Spaceships", "rle": "3b2o$bo4bo$o$o5bo$6o!", "expect": { "kind": "spaceship", "period": 4, "dx": -2, "dy": 0 } },
+  { "id": "copperhead", "name": "Copperhead", "category": "Spaceships", "rle": "b2o2b2o$3b2o$3b2o$obo2bobo$o6bo2$o6bo$b2o2b2o$2b4o2$3b2o$3b2o!", "expect": { "kind": "spaceship", "period": 10, "dx": 0, "dy": -1 } },
+  { "id": "loafer", "name": "Loafer", "category": "Spaceships", "rle": "b2o2bob2o$o2bo2b2o$bobo$2bo$8bo$6b3o$5bo$6bo$7b2o!", "expect": { "kind": "spaceship", "period": 7, "dx": -1, "dy": 0 } },
+
+  { "id": "gosper-gun", "name": "Gosper glider gun", "category": "Guns & growth", "rle": "24bo$22bobo$12b2o6b2o12b2o$11bo3bo4b2o12b2o$2o8bo5bo3b2o$2o8bo3bob2o4bobo$10bo5bo7bo$11bo3bo$12b2o!", "expect": { "kind": "growth", "period": 30, "delta": 5 } },
+  { "id": "simkin-gun", "name": "Simkin glider gun", "category": "Guns & growth", "rle": "2o5b2o$2o5b2o2$4b2o$4b2o5$22b2ob2o$21bo5bo$21bo6bo2b2o$21b3o3bo3b2o$26bo4$20b2o$20bo$21b3o$23bo!", "expect": { "kind": "growth", "period": 120, "delta": 5 } },
+  { "id": "switch-engine", "name": "Block-laying switch engine", "category": "Guns & growth", "rle": "3obo$o$3b2o$b2obo$obobo!", "expect": { "kind": "growth", "period": 144, "delta": 16 } },
+
+  { "id": "r-pentomino", "name": "R-pentomino", "category": "Methuselahs", "rle": "b2o$2o$bo!", "expect": { "kind": "methuselah", "settles": "drifting", "population": 116 } },
+  { "id": "acorn", "name": "Acorn", "category": "Methuselahs", "rle": "bo$3bo$2o2b3o!", "expect": { "kind": "methuselah", "settles": "drifting", "population": 633 } },
+  { "id": "diehard", "name": "Diehard", "category": "Methuselahs", "rle": "6bo$2o$bo3b3o!", "expect": { "kind": "methuselah", "settles": "empty", "population": 0 } },
+  { "id": "b-heptomino", "name": "B-heptomino", "category": "Methuselahs", "rle": "ob2o$3o$bo!", "expect": { "kind": "methuselah", "settles": "drifting", "population": 28 } }
+]
