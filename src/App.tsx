@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { parseRule, ruleName, type Rule } from './patterns/rule';
+import { parseRule, rangeRuleName, ruleName, type RangeRule, type Rule } from './patterns/rule';
 import { buildLink, decodeCells, MAX_SHARED_CELLS, parseLink, type LinkContent } from './share/link';
 import { formatRleFile, parseRleFile, RleError } from './patterns/rle';
 import type { Pattern } from './patterns/library';
@@ -10,6 +10,7 @@ import { BrushIcon, ChevronIcon, ClearIcon, EraserIcon, HandIcon, PauseIcon, Pla
 import { HAT_PATTERNS, type HatPattern } from './patterns/hatPatterns';
 import { HatPatternPanel, PatternPanel } from './ui/PatternPanel';
 import { RulePanel } from './ui/RulePanel';
+import { RangeRulePanel } from './ui/RangeRulePanel';
 import { TableRulePanel } from './ui/TableRulePanel';
 import { RlePanel } from './ui/RlePanel';
 import { SharePanel } from './ui/SharePanel';
@@ -121,6 +122,8 @@ export function App() {
   const [rule, setRule] = useState<Rule>(shared?.rule ?? parseRule(neighbourhood.rules[0]));
   /** A pattern's own priority table, which replaces the rule while it is set. */
   const [table, setTable] = useState<number[] | null>(HAT_PATTERNS.find((p) => p.id === shared?.table)?.table ?? null);
+  /** A rule on a larger neighbourhood of the hat tiling, which also replaces the rule. */
+  const [range, setRange] = useState<RangeRule | null>(shared?.range ?? null);
   const [stopWhenSettled, setStopWhenSettled] = useState(false);
   const [patternId, setPatternId] = useState<string | null>(null);
   /** The hat pattern whose table is active, for the link. */
@@ -144,6 +147,10 @@ export function App() {
     try {
       const stage = new Stage(canvasRef.current!);
       stage.onStats = setStats;
+      stage.onHatMissing = () => {
+        setLinkProblems((current) => [...current, 'cells']);
+        setOpen('share');
+      };
       stageRef.current = stage;
       return () => {
         stage.dispose();
@@ -171,8 +178,9 @@ export function App() {
     const stage = stageRef.current;
     if (!stage) return;
     if (table && isHat) stage.setHatTable(table);
+    else if (range && isHat) stage.setHatRange(range);
     else stage.setRule(rule.birth, rule.survive);
-  }, [rule, table, isHat, onTorus]);
+  }, [rule, table, range, isHat, onTorus]);
   // Birth from nothing needs a finite field.
   useEffect(() => {
     if (!onTorus && rule.birth & 1) setRule((current) => ({ ...current, birth: current.birth & ~1 }));
@@ -185,6 +193,7 @@ export function App() {
     setTool((current) => (current === 'stamp' ? 'brush' : current));
     setPatternId(null);
     setTable(null);
+    setRange(null);
   }, [isHat]);
   // Each neighbourhood starts from a rule known to stay lively on it. A link may
   // already have brought its own, so this only reacts to later changes.
@@ -193,6 +202,7 @@ export function App() {
     if (lastNeighbourhood.current === neighbourhood) return;
     lastNeighbourhood.current = neighbourhood;
     setRule(parseRule(neighbourhood.rules[0]));
+    setRange(null);
     // Hat patterns need all neighbours, and a rule from the panel ends their table.
     if (neighbourhood.topology !== 'hatVertices') setTable(null);
     if (neighbourhood.topology !== 'moore' && neighbourhood.topology !== 'hatVertices') {
@@ -208,6 +218,8 @@ export function App() {
     let cancelled = false;
     if (shared.camera) stage.setCamera(shared.camera);
     if (shared.recipe) stage.applyRecipe(shared.recipe);
+    // Handed to the worker, and this effect runs twice in development.
+    if (shared.hatCells) stage.loadHatCells(shared.hatCells.slice());
     if (shared.cells) {
       decodeCells(shared.cells).then(
         (cells) => {
@@ -332,6 +344,7 @@ export function App() {
   const pickHatPattern = (pattern: HatPattern) => {
     setTile((current) => ({ ...current, neighbourhood: 0 }));
     setTable(pattern.table);
+    setRange(null);
     setPatternId(pattern.id);
     stageRef.current?.setHatSeed(pattern.seed);
     setTool('stamp');
@@ -339,6 +352,7 @@ export function App() {
   const changeRule = (next: Rule) => {
     setRule(next);
     setTable(null);
+    setRange(null);
     if (isHat) {
       setPatternId(null);
       setTool((current) => (current === 'stamp' ? 'brush' : current));
@@ -347,8 +361,10 @@ export function App() {
   const createLink = async (): Promise<{ url: string; content: LinkContent }> => {
     const snapshot = await stageRef.current!.snapshot(MAX_SHARED_CELLS);
     const { hash, content } = await buildLink({
-      settings: { tile, rule, table: isHat ? tableId : null, torus, camera: snapshot.camera },
+      settings: { tile, rule, table: isHat ? tableId : null, range: isHat ? range : null, torus, camera: snapshot.camera },
       ...snapshot,
+      // The states of a table are more than a list of live cells can tell.
+      hatCells: isHat && !tableId ? snapshot.hatCells : null,
     });
     return { url: window.location.href.split('#')[0] + hash, content };
   };
@@ -441,9 +457,11 @@ export function App() {
             <TilePanel state={tile} onChange={setTile} />
             {isHat && capped && <p className="note warn">The cell limit of this browser tab is reached, so the field ends here.</p>}
           </PanelSection>
-          <PanelSection title="Rule" readout={tablePattern ? 'Extended ruleset' : ruleName(rule)} open={open === 'rule'} onToggle={() => toggleSection('rule')}>
+          <PanelSection title="Rule" readout={tablePattern ? 'Extended ruleset' : range ? rangeRuleName(range) : ruleName(rule)} open={open === 'rule'} onToggle={() => toggleSection('rule')}>
             {tablePattern ? (
               <TableRulePanel pattern={tablePattern} onReturn={() => changeRule(rule)} />
+            ) : range ? (
+              <RangeRulePanel range={range} onReturn={() => changeRule(rule)} />
             ) : (
               <RulePanel rule={rule} count={neighbourhood.count} presets={neighbourhood.rules} birthFromNothing={onTorus} onChange={changeRule} />
             )}

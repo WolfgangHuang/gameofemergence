@@ -4,9 +4,13 @@
  * in through one is untrusted, so everything is checked on the way in.
  *
  * Example: #v=1&p=Square&r=B3/S23&c=0,0,14&a=10,20,bo-2bo-3o
+ *
+ * Cells of the hat tiling go by their place in it, five numbers each, in `h`, as
+ * their ids depend on the order in which the field was generated:
+ * #v=1&f=hat&m=60&r=R2B5-7S3-8&c=0,0,14&h=1,2,3,4,5,...
  */
 import { parseRle, RleError, toRle } from '../patterns/rle.ts';
-import { parseRule, ruleName, type Rule } from '../patterns/rule.ts';
+import { parseRangeRule, parseRule, rangeRuleName, ruleName, type RangeRule, type Rule } from '../patterns/rule.ts';
 import { HAT_PATTERNS } from '../patterns/hatPatterns.ts';
 import type { TorusSize } from '../sim/protocol.ts';
 import { FAMILIES, fullOutline, HAT_NEIGHBOURHOODS, isValidOutline, isValidTorusSide, type Family, type Vec } from '../tiles/tiles.ts';
@@ -23,6 +27,9 @@ const COMPRESS_FROM = 200;
 const COORD_LIMIT = 1e9;
 const MAX_SOUP_SIDE = 4096;
 const MAX_HAT_SOUP_RADIUS = 250;
+export const HAT_KEY_FIELDS = 5;
+/** Far more than fits into a link of ours, so whatever exceeds this is not one. */
+const MAX_HAT_LINK_CELLS = 10_000;
 
 /** How a random field came about. It reproduces the field exactly, in far fewer characters. */
 export type Recipe =
@@ -49,6 +56,8 @@ export interface Settings {
   rule: Rule;
   /** Id of a hat pattern whose table replaces the rule. */
   table: string | null;
+  /** A rule on a larger neighbourhood of the hat tiling, which replaces the rule. */
+  range?: RangeRule | null;
   torus: TorusSize | null;
   camera: Camera;
 }
@@ -65,10 +74,13 @@ export interface ParsedLink {
   tile: SharedTile | null;
   rule: Rule | null;
   table: string | null;
+  range: RangeRule | null;
   torus: TorusSize | null;
   camera: Camera | null;
   recipe: Recipe | null;
   cells: CodedCells | null;
+  /** Places in the hat tiling, five numbers each. */
+  hatCells: Int32Array<ArrayBuffer> | null;
   /** What had to be ignored, for showing to the user. */
   problems: string[];
 }
@@ -82,19 +94,19 @@ export type LinkContent =
   | 'empty'
   /** Settings only, because there are too many cells. */
   | 'too-many'
-  /** Settings only, because cells of the hat tiling cannot be stored yet. */
+  /** Settings only, because cells of a four-state table have no form in a link yet. */
   | 'hat-cells';
 
 const round = (value: number, digits: number) => Number(value.toFixed(digits));
 
-function settingsParts({ tile, rule, table, torus, camera }: Settings) {
+function settingsParts({ tile, rule, table, range, torus, camera }: Settings) {
   const parts = [`v=${VERSION}`];
   if (tile.family !== 'quad') parts.push(`f=${tile.family}`);
   if (tile.family === 'hat') parts.push(`m=${tile.morph}`);
   else if (tile.preset !== null) parts.push(`p=${encodeURIComponent(tile.preset)}`);
   else parts.push(`o=${tile.outline.flat().map((v) => round(v, 4)).join(',')}`);
   if (tile.neighbourhood !== 0) parts.push(`n=${tile.neighbourhood}`);
-  parts.push(table ? `k=${encodeURIComponent(table)}` : `r=${ruleName(rule)}`);
+  parts.push(table ? `k=${encodeURIComponent(table)}` : `r=${range ? rangeRuleName(range) : ruleName(rule)}`);
   if (torus) parts.push(`t=${torus.width}x${torus.height}`);
   parts.push(`c=${round(camera.x, 2)},${round(camera.y, 2)},${round(camera.size, 3)}`);
   return parts;
@@ -157,8 +169,10 @@ export async function buildLink(input: {
   population: number;
   /** Flat x, y pairs, or null where they are not available. */
   cells: ArrayLike<number> | null;
+  /** Places in the hat tiling, five numbers each, or null where they are not available. */
+  hatCells?: ArrayLike<number> | null;
 }): Promise<{ hash: string; content: LinkContent }> {
-  const { settings, recipe, generation, population, cells } = input;
+  const { settings, recipe, generation, population, cells, hatCells } = input;
   const base = settingsParts(settings);
   const hash = (...extra: string[]) => `#${[...base, ...extra].join('&')}`;
 
@@ -167,6 +181,11 @@ export async function buildLink(input: {
   if (cells && cells.length > 0) {
     const part = await cellsPart(cells);
     if (part && hash(part).length <= MAX_LINK_LENGTH) return { hash: hash(part), content: 'exact' };
+  }
+  if (hatCells && hatCells.length > 0) {
+    const part = `h=${Array.from(hatCells).join(',')}`;
+    if (hash(part).length <= MAX_LINK_LENGTH) return { hash: hash(part), content: 'exact' };
+    if (!recipe) return { hash: hash(), content: 'too-many' };
   }
   if (recipe) return { hash: hash(recipePart(recipe)), content: 'start' };
   return { hash: hash(), content: settings.tile.family === 'hat' ? 'hat-cells' : 'too-many' };
@@ -244,6 +263,23 @@ function parseRecipe(text: string, hat: boolean, problems: string[]): Recipe | n
   return null;
 }
 
+/** Keeps a list to what can be a place in the tiling. The engine checks that a hat is there. */
+function parseHatCells(text: string, problems: string[]) {
+  const parts = text.split(',');
+  const values = parts.map(Number);
+  const valid =
+    text !== '' &&
+    parts.length % HAT_KEY_FIELDS === 0 &&
+    parts.length <= MAX_HAT_LINK_CELLS * HAT_KEY_FIELDS &&
+    !parts.includes('') &&
+    values.every((v, i) => Number.isInteger(v) && (i % HAT_KEY_FIELDS === 0 ? (v >= 0 && v < 6) || (v >= 8 && v < 14) : Math.abs(v) <= COORD_LIMIT));
+  if (!valid) {
+    problems.push('cells');
+    return null;
+  }
+  return Int32Array.from(values);
+}
+
 function parseCoded(text: string, compressed: boolean, problems: string[]): CodedCells | null {
   const [x, y, ...rest] = text.split(',');
   const data = rest.join(',');
@@ -270,7 +306,7 @@ export function parseLink(hash: string): ParsedLink | null {
   if (!params.has('v')) return null;
 
   const problems: string[] = [];
-  const parsed: ParsedLink = { tile: null, rule: null, table: null, torus: null, camera: null, recipe: null, cells: null, problems };
+  const parsed: ParsedLink = { tile: null, rule: null, table: null, range: null, torus: null, camera: null, recipe: null, cells: null, hatCells: null, problems };
   if (params.get('v') !== VERSION) {
     problems.push('version');
     return parsed;
@@ -297,7 +333,10 @@ export function parseLink(hash: string): ParsedLink | null {
       const allowed = parsed.torus ? all : all & ~1;
       parsed.rule = { birth: birth & allowed, survive: survive & all };
     } else {
-      problems.push('rule');
+      // A larger neighbourhood counts over edges and corners, and only the hat has it.
+      const range = isHat && tile.neighbourhood === 0 ? parseRangeRule(rule) : null;
+      if (range) parsed.range = range;
+      else problems.push('rule');
     }
   }
 
@@ -322,7 +361,34 @@ export function parseLink(hash: string): ParsedLink | null {
     if (isHat) problems.push('cells');
     else parsed.cells = parseCoded(cells, compressed, problems);
   }
+  const hatCells = params.get('h');
+  if (hatCells !== undefined) {
+    if (isHat) parsed.hatCells = parseHatCells(hatCells, problems);
+    else problems.push('cells');
+  }
   return parsed;
+}
+
+/**
+ * The fragment in what somebody wants to open: a link, a bare fragment or a find
+ * file of the search tool. Null if it holds none of ours.
+ */
+export function linkFromImport(text: string): string | null {
+  let candidate = text.trim();
+  if (candidate.startsWith('{')) {
+    try {
+      const file: unknown = JSON.parse(candidate);
+      const link = typeof file === 'object' && file !== null ? (file as { link?: unknown }).link : null;
+      if (typeof link !== 'string') return null;
+      candidate = link;
+    } catch {
+      return null;
+    }
+  }
+  const at = candidate.indexOf('#');
+  if (at < 0) return null;
+  const hash = candidate.slice(at);
+  return hash.length <= MAX_LINK_LENGTH * 2 && parseLink(hash) ? hash : null;
 }
 
 /** Flat x, y pairs in field coordinates. Throws `RleError` on anything malformed. */

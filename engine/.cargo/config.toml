@@ -1,0 +1,6 @@
+# The search runs natively, on machines that may have no C toolchain: musl brings
+# its own start files and libc, and rust-lld ships with Rust. The result is one
+# static binary that can be copied to another Linux machine.
+[target.x86_64-unknown-linux-musl]
+linker = "rust-lld"
+rustflags = ["-C", "link-self-contained=yes"]

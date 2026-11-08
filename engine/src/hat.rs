@@ -490,7 +490,7 @@ impl Hierarchy {
         hierarchy
     }
 
-    fn hat_bounds(&self) -> ((f64, f64), f64) {
+    pub fn hat_bounds(&self) -> ((f64, f64), f64) {
         let n = self.outline.len() as f64;
         let (mut cx, mut cy) = (0.0, 0.0);
         for v in &self.outline {
@@ -681,12 +681,17 @@ fn frame_point(frame: &Frame, p: (f64, f64)) -> (f64, f64) {
 
 /// Calls `visit` with every hat inside a metatile, in document order.
 pub fn for_each_hat(hierarchy: &Hierarchy, level: usize, kind: usize, frame: &Frame, visit: &mut impl FnMut(&Frame)) {
+    for_each_hat_tagged(hierarchy, level, kind, frame, &mut |hat, _| visit(hat));
+}
+
+/// Like `for_each_hat`, also telling the kind of the H, T, P or F metatile around each hat.
+pub fn for_each_hat_tagged(hierarchy: &Hierarchy, level: usize, kind: usize, frame: &Frame, visit: &mut impl FnMut(&Frame, usize)) {
     for child in &hierarchy.levels[level][kind].children {
         let next = frame.then(&child.frame);
         if level == 0 {
-            visit(&next);
+            visit(&next, kind);
         } else {
-            for_each_hat(hierarchy, level - 1, child.kind, &next, visit);
+            for_each_hat_tagged(hierarchy, level - 1, child.kind, &next, visit);
         }
     }
 }

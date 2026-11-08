@@ -19,6 +19,12 @@ const MAX_AT_POINT: usize = 6;
 /// field simply ends.
 const MAX_CELLS: usize = 1_500_000;
 const NONE: u32 = u32::MAX;
+/// Largest neighbourhood radius, in rings. Its balls must stay below 128 cells,
+/// the width of a rule's count mask, which a test checks.
+pub const MAX_RADIUS: u8 = 3;
+/// Lattice units around a piece that hold everything within one ring of it: more
+/// than the longest diameter of a hat.
+const RING_MARGIN: f64 = 8.0;
 
 /// Cell bytes double as texture values, so that the renderer can shade states:
 /// state 1 is drawn fully, states 2 and 3 progressively lighter.
@@ -88,15 +94,30 @@ pub struct HatWorld {
     edge_neighbours: Vec<u8>,
     all_neighbours: Vec<u8>,
 
+    /// H, T, P or F metatile around each cell, see `metatile`.
+    metatile: Vec<u8>,
+    /// For a radius above 1: everything within that many rings, built when a cell
+    /// first comes alive, as it needs the field around it to exist.
+    balls: Vec<Box<[u32]>>,
+    radius: u8,
+
     state: Vec<u8>,
+    /// Live cells in no particular order, and where each cell sits in that list.
+    live: Vec<u32>,
+    live_pos: Vec<u32>,
     counts: Vec<u8>,
     dirty: Vec<u32>,
     is_dirty: Vec<bool>,
     flips: Vec<(u32, u8)>,
     edges_only: bool,
     table: Option<Vec<Row>>,
-    birth: u16,
-    survive: u16,
+    /// One bit per neighbour count.
+    birth: u128,
+    survive: u128,
+    /// The status detector costs a few percent, which a search does not want to pay.
+    pub observing: bool,
+    /// Centre of a hat relative to its position, by `rotation + 8 * flip`.
+    center_offsets: [(f64, f64); 16],
     changed: bool,
     hash: u64,
     pub generation: u64,
@@ -107,6 +128,14 @@ pub struct HatWorld {
     pub scratch: Vec<u32>,
     export: Vec<i32>,
     ratio: (f64, f64),
+}
+
+/// A hat's place in the tiling: `rotation + 8 * flip`, then the two parts of its position.
+pub type CellKey = [i32; 5];
+
+fn count_range((low, high): (u8, u8)) -> u128 {
+    let upper = if high >= 127 { u128::MAX } else { (1u128 << (high + 1)) - 1 };
+    upper & !((1u128 << low) - 1)
 }
 
 fn mix(id: u32) -> u64 {
@@ -156,6 +185,13 @@ impl HatWorld {
         let norm = px * px + py * py;
         let ratio = ((qx * px + qy * py) / norm, (qy * px - qx * py) / norm);
 
+        let (hat_center, _) = hierarchy.hat_bounds();
+        let mut center_offsets = [(0.0, 0.0); 16];
+        for (index, offset) in center_offsets.iter_mut().enumerate() {
+            let frame = Frame { rotation: (index & 7) as u8 % 6, flip: index >= 8, at: Split::default() };
+            *offset = center_of(&frame, hat_center);
+        }
+
         let mut world = HatWorld {
             hierarchy,
             root,
@@ -169,7 +205,12 @@ impl HatWorld {
             neighbours: Vec::new(),
             edge_neighbours: Vec::new(),
             all_neighbours: Vec::new(),
+            metatile: Vec::new(),
+            balls: Vec::new(),
+            radius: 1,
             state: Vec::new(),
+            live: Vec::new(),
+            live_pos: Vec::new(),
             counts: Vec::new(),
             dirty: Vec::new(),
             is_dirty: Vec::new(),
@@ -178,6 +219,8 @@ impl HatWorld {
             table: None,
             birth: 1 << 2,
             survive: 1 << 3,
+            observing: true,
+            center_offsets,
             changed: false,
             hash: 0,
             generation: 0,
@@ -260,13 +303,13 @@ impl HatWorld {
         self.pieces.push(Piece { center, radius: proto.radius, surrounded: false });
 
         let mut hats = Vec::with_capacity(proto.hats as usize);
-        crate::hat::for_each_hat(&self.hierarchy, PIECE_LEVEL, kind, &frame, &mut |f| hats.push(*f));
-        for hat in hats {
-            self.add_cell(hat, piece);
+        crate::hat::for_each_hat_tagged(&self.hierarchy, PIECE_LEVEL, kind, &frame, &mut |f, metatile| hats.push((*f, metatile as u8)));
+        for (hat, metatile) in hats {
+            self.add_cell(hat, piece, metatile);
         }
     }
 
-    fn add_cell(&mut self, frame: Frame, piece: u32) {
+    fn add_cell(&mut self, frame: Frame, piece: u32, metatile: u8) {
         let id = self.frames.len() as u32;
         let points = hat_points(&self.hierarchy, &frame);
 
@@ -307,7 +350,10 @@ impl HatWorld {
         self.neighbours.push([NONE; MAX_NEIGHBOURS]);
         self.edge_neighbours.push(0);
         self.all_neighbours.push(0);
+        self.metatile.push(metatile);
+        self.balls.push(Box::default());
         self.state.push(0);
+        self.live_pos.push(NONE);
         self.counts.push(0);
         self.is_dirty.push(false);
 
@@ -331,7 +377,8 @@ impl HatWorld {
             row[all] = other;
         }
         self.all_neighbours[c] += 1;
-        if (is_edge || !self.edges_only) && self.state[other as usize] != 0 {
+        // With a larger radius, a live cell's whole ball exists before it counts.
+        if self.radius == 1 && (is_edge || !self.edges_only) && self.state[other as usize] != 0 {
             self.counts[c] += 1;
             self.mark(cell);
         }
@@ -354,17 +401,43 @@ impl HatWorld {
         if old == byte {
             return;
         }
+        let life_changed = (old == 0) != (byte == 0);
+        if life_changed && byte != 0 && self.radius > 1 {
+            self.ensure_ball(cell);
+        }
         self.state[c] = byte;
         self.hash ^= hash_term(cell, old) ^ hash_term(cell, byte);
-        let life_changed = (old == 0) != (byte == 0);
         if life_changed {
             if byte != 0 {
                 self.population += 1;
+                self.live_pos[c] = self.live.len() as u32;
+                self.live.push(cell);
             } else {
                 self.population -= 1;
+                let at = self.live_pos[c] as usize;
+                self.live.swap_remove(at);
+                if let Some(&moved) = self.live.get(at) {
+                    self.live_pos[moved as usize] = at as u32;
+                }
+                self.live_pos[c] = NONE;
             }
         }
         self.mark(cell);
+        if self.radius > 1 {
+            let ball = std::mem::take(&mut self.balls[c]);
+            for &n in ball.iter() {
+                if life_changed {
+                    if byte != 0 {
+                        self.counts[n as usize] += 1;
+                    } else {
+                        self.counts[n as usize] -= 1;
+                    }
+                }
+                self.mark(n);
+            }
+            self.balls[c] = ball;
+            return;
+        }
         for i in 0..self.neighbour_range(c) {
             let n = self.neighbours[c][i];
             if life_changed {
@@ -415,6 +488,7 @@ impl HatWorld {
             i += 3 + 2 * count;
         }
         self.table = Some(rows);
+        self.set_radius(1);
         for cell in 0..self.frames.len() as u32 {
             self.mark(cell);
         }
@@ -445,35 +519,51 @@ impl HatWorld {
         }
         self.pieces[piece].surrounded = true;
         let (center, radius) = (self.pieces[piece].center, self.pieces[piece].radius);
-        self.load_absolute(center.0, center.1, radius + 8.0);
+        self.load_absolute(center.0, center.1, radius + RING_MARGIN * self.radius as f64);
     }
 
-    /// B0 would need every cell of the infinite field to be born, so it is refused.
-    pub fn set_rule(&mut self, birth: u16, survive: u16) -> bool {
-        if birth & 1 != 0 {
-            return false;
+    fn ensure_ball(&mut self, cell: u32) {
+        self.surround(cell);
+        if !self.balls[cell as usize].is_empty() {
+            return;
         }
-        self.birth = birth;
-        self.survive = survive;
-        self.table = None;
-        // A table may have left states behind that life-like rules do not know.
-        for cell in 0..self.frames.len() as u32 {
-            if self.state[cell as usize] != 0 {
-                self.set_state(cell, 255);
+        let ball = self.cells_within(cell, self.radius as u32);
+        self.balls[cell as usize] = ball.into_boxed_slice();
+    }
+
+    /// All cells at 1 to `rings` steps over edges and corners. They must exist.
+    fn cells_within(&self, cell: u32, rings: u32) -> Vec<u32> {
+        let mut found = vec![cell];
+        let mut from = 0;
+        for _ in 0..rings {
+            let to = found.len();
+            for i in from..to {
+                let c = found[i] as usize;
+                for &n in &self.neighbours[c][..self.all_neighbours[c] as usize] {
+                    if !found.contains(&n) {
+                        found.push(n);
+                    }
+                }
             }
-            self.mark(cell);
+            from = to;
         }
-        self.detector.invalidate();
-        true
+        found.swap_remove(0);
+        found
     }
 
-    pub fn set_edges_only(&mut self, edges_only: bool) {
-        self.edges_only = edges_only;
+    /// Counts everything anew, for after the meaning of a neighbour has changed.
+    fn recount(&mut self) {
         self.counts.iter_mut().for_each(|c| *c = 0);
-        for c in 0..self.frames.len() {
-            if self.state[c] != 0 {
-                for i in 0..self.neighbour_range(c) {
-                    let n = self.neighbours[c][i] as usize;
+        for i in 0..self.live.len() {
+            let c = self.live[i] as usize;
+            if self.radius > 1 {
+                self.ensure_ball(c as u32);
+                for &n in self.balls[c].iter() {
+                    self.counts[n as usize] += 1;
+                }
+            } else {
+                for k in 0..self.neighbour_range(c) {
+                    let n = self.neighbours[c][k] as usize;
                     self.counts[n] += 1;
                 }
             }
@@ -481,14 +571,93 @@ impl HatWorld {
         for cell in 0..self.frames.len() as u32 {
             self.mark(cell);
         }
+    }
+
+    /// How many rings count as neighbours. 1 is the usual neighbourhood.
+    fn set_radius(&mut self, radius: u8) {
+        if radius == self.radius {
+            return;
+        }
+        self.radius = radius;
+        // Both were worked out for the old radius.
+        self.pieces.iter_mut().for_each(|p| p.surrounded = false);
+        self.balls.iter_mut().for_each(|b| *b = Box::default());
+        for i in 0..self.live.len() {
+            self.surround(self.live[i]);
+        }
+        self.recount();
+    }
+
+    /// B0 would need every cell of the infinite field to be born, so it is refused.
+    pub fn set_rule(&mut self, birth: u16, survive: u16) -> bool {
+        if birth & 1 != 0 {
+            return false;
+        }
+        self.apply_rule(birth as u128, survive as u128, 1);
+        true
+    }
+
+    /// A rule on all cells within `radius` rings: born with `birth.0` to `birth.1`
+    /// live cells in there, surviving with `survive.0` to `survive.1`. The cell
+    /// itself does not count. Returns false for what the engine cannot do.
+    pub fn set_range_rule(&mut self, radius: u8, birth: (u8, u8), survive: (u8, u8)) -> bool {
+        let valid = (1..=MAX_RADIUS).contains(&radius)
+            && birth.0 >= 1
+            && birth.0 <= birth.1
+            && birth.1 < 128
+            && survive.0 <= survive.1
+            && survive.1 < 128;
+        if !valid {
+            return false;
+        }
+        self.apply_rule(count_range(birth), count_range(survive), radius);
+        true
+    }
+
+    fn apply_rule(&mut self, birth: u128, survive: u128, radius: u8) {
+        self.birth = birth;
+        self.survive = survive;
+        self.table = None;
+        self.set_radius(radius);
+        // A table may have left states behind that life-like rules do not know.
+        for i in 0..self.live.len() {
+            self.set_state(self.live[i], 255);
+        }
+        for cell in 0..self.frames.len() as u32 {
+            self.mark(cell);
+        }
+        self.detector.invalidate();
+    }
+
+    /// Changes rule and radius of an empty field without visiting every cell, for
+    /// searches that try thousands of rules on one world. Masks hold one bit per count.
+    pub fn set_masks_when_empty(&mut self, birth: u128, survive: u128, radius: u8) {
+        assert!(self.population == 0 && birth & 1 == 0 && (1..=MAX_RADIUS).contains(&radius));
+        self.birth = birth;
+        self.survive = survive;
+        self.table = None;
+        self.set_radius(radius);
+    }
+
+    /// Empties the field and forgets what was pending, at the cost of what was alive.
+    pub fn reset_when_ruled(&mut self) {
+        self.clear();
+        for i in 0..self.dirty.len() {
+            self.is_dirty[self.dirty[i] as usize] = false;
+        }
+        self.dirty.clear();
+        self.hash = 0;
+    }
+
+    pub fn set_edges_only(&mut self, edges_only: bool) {
+        self.edges_only = edges_only;
+        self.recount();
         self.detector.invalidate();
     }
 
     pub fn clear(&mut self) {
-        for cell in 0..self.frames.len() as u32 {
-            if self.state[cell as usize] != 0 {
-                self.flip(cell);
-            }
+        while let Some(&cell) = self.live.last() {
+            self.flip(cell);
         }
         self.generation = 0;
         self.changed = false;
@@ -575,9 +744,128 @@ impl HatWorld {
         self.flips = flips;
         self.generation += 1;
 
-        let mut detector = std::mem::take(&mut self.detector);
-        detector.observe(&*self);
-        self.detector = detector;
+        if self.observing {
+            let mut detector = std::mem::take(&mut self.detector);
+            detector.observe(&*self);
+            self.detector = detector;
+        }
+    }
+
+    /// Makes a dead cell alive, generating what it needs around it.
+    pub fn set_alive(&mut self, cell: u32) {
+        if self.state[cell as usize] == 0 {
+            self.flip(cell);
+            self.surround(cell);
+        }
+    }
+
+    pub fn live(&self) -> &[u32] {
+        &self.live
+    }
+
+    pub fn field_hash(&self) -> u64 {
+        self.hash
+    }
+
+    /// Everything touching a cell, over edges or corners. Parts of it may not exist
+    /// yet where the field has not been generated.
+    pub fn touching(&self, cell: u32) -> &[u32] {
+        &self.neighbours[cell as usize][..self.all_neighbours[cell as usize] as usize]
+    }
+
+    /// 0 to 3 for H, T, P and F.
+    pub fn metatile(&self, cell: u32) -> u8 {
+        self.metatile[cell as usize]
+    }
+
+    /// A mirrored hat. Each H metatile holds one, and nothing else does.
+    pub fn is_mirrored(&self, cell: u32) -> bool {
+        self.frames[cell as usize].flip
+    }
+
+    pub fn orientation(&self, cell: u32) -> u8 {
+        self.frames[cell as usize].rotation
+    }
+
+    pub fn set_max_cells(&mut self, max_cells: usize) {
+        self.max_cells = max_cells;
+    }
+
+    /// Centre of a hat, in the lattice units of `load_around`.
+    pub fn center(&self, cell: u32) -> (f64, f64) {
+        let frame = &self.frames[cell as usize];
+        let at = frame.at.lattice();
+        let origin = self.origin.lattice();
+        let offset = self.center_offsets[frame.rotation as usize + if frame.flip { 8 } else { 0 }];
+        ((at.x() - origin.x()) + offset.0, (at.y() - origin.y()) + offset.1)
+    }
+
+    /// A cell's place in the tiling, the five numbers of `export_cells`. Unlike its
+    /// id, which depends on the order of generation, it means the same in any world.
+    pub fn key_of(&self, cell: u32) -> CellKey {
+        let frame = &self.frames[cell as usize];
+        [
+            frame.rotation as i32 + if frame.flip { 8 } else { 0 },
+            (frame.at.p.q - self.origin.p.q) as i32,
+            (frame.at.p.r - self.origin.p.r) as i32,
+            (frame.at.q.q - self.origin.q.q) as i32,
+            (frame.at.q.r - self.origin.q.r) as i32,
+        ]
+    }
+
+    /// Generates the field where needed. None if the tiling has no such hat.
+    pub fn cell_of(&mut self, key: CellKey) -> Option<u32> {
+        let rotation = key[0] & 7;
+        let frame = Frame {
+            rotation: rotation as u8,
+            flip: key[0] & 8 != 0,
+            at: Split {
+                p: Hex::new(key[1] as i64 + self.origin.p.q, key[2] as i64 + self.origin.p.r),
+                q: Hex::new(key[3] as i64 + self.origin.q.q, key[4] as i64 + self.origin.q.r),
+            },
+        };
+        if !(0..16).contains(&key[0]) || rotation >= 6 {
+            return None;
+        }
+        let at = frame.at.lattice();
+        self.load_absolute(at.x(), at.y(), 1.0);
+        let entry = self.at_points.get(&point_key(at))?;
+        entry.cells[..entry.len as usize].iter().copied().find(|&c| self.frames[c as usize] == frame)
+    }
+
+    /// Sets cells given by flat keys in the scratch buffer. Returns how many of them
+    /// the tiling does not have.
+    pub fn paint_keys_from_scratch(&mut self, n: usize, alive: bool) -> u32 {
+        let data = std::mem::take(&mut self.scratch);
+        let mut missing = 0;
+        for key in data[..n.min(data.len())].chunks_exact(5) {
+            let key = [key[0] as i32, key[1] as i32, key[2] as i32, key[3] as i32, key[4] as i32];
+            match self.cell_of(key) {
+                Some(cell) => {
+                    if (self.state[cell as usize] != 0) != alive {
+                        self.flip(cell);
+                        if alive {
+                            self.surround(cell);
+                        }
+                    }
+                }
+                None => missing += 1,
+            }
+        }
+        self.scratch = data;
+        self.detector.invalidate();
+        missing
+    }
+
+    /// The live cells as flat keys.
+    pub fn export_live(&mut self) -> &[i32] {
+        let mut out = std::mem::take(&mut self.export);
+        out.clear();
+        for &cell in &self.live {
+            out.extend(self.key_of(cell));
+        }
+        self.export = out;
+        &self.export
     }
 
     pub fn export_cells(&mut self, from: usize) -> &[i32] {
@@ -647,6 +935,142 @@ mod tests {
             }
         }
         next
+    }
+
+    /// The same with everything within `radius` rings, which the field must contain.
+    fn naive_range_next(w: &HatWorld, radius: u32, birth: (u8, u8), survive: (u8, u8)) -> Set<u32> {
+        let mut next = Set::new();
+        let mut near = Set::new();
+        for &live in w.live() {
+            near.insert(live);
+            near.extend(w.cells_within(live, radius));
+        }
+        for &c in &near {
+            let ball = w.cells_within(c, radius);
+            let n = ball.iter().filter(|&&o| w.state[o as usize] != 0).count() as u8;
+            let (low, high) = if w.state[c as usize] != 0 { survive } else { birth };
+            if low <= n && n <= high {
+                next.insert(c);
+            }
+        }
+        next
+    }
+
+    #[test]
+    fn range_rules_match_a_full_recount() {
+        for (radius, birth, survive, seed) in [(2, (3, 5), (2, 7), 11), (2, (4, 6), (3, 9), 12), (3, (9, 13), (6, 14), 13)] {
+            let mut w = HatWorld::new();
+            assert!(w.set_range_rule(radius, birth, survive));
+            // Generated around the action in advance, so that the reference sees all
+            // it needs, then compared against what generating on demand would do.
+            w.load_around(0.0, 0.0, 700.0);
+            w.soup(0.0, 0.0, 25.0, 0.4, seed);
+            for generation in 0..25 {
+                let expected = naive_range_next(&w, radius as u32, birth, survive);
+                w.step();
+                let actual: Set<u32> = live(&w).into_iter().collect();
+                assert_eq!(actual, expected, "radius {radius} generation {generation}");
+            }
+        }
+    }
+
+    /// The field generated on demand must behave like one that was there all along,
+    /// which is what makes a measurement free of edge effects.
+    #[test]
+    fn generating_on_demand_changes_nothing_at_any_radius() {
+        for radius in 1..=MAX_RADIUS {
+            let mut lazy = HatWorld::new();
+            let mut full = HatWorld::new();
+            full.load_around(0.0, 0.0, 400.0);
+            let birth = (radius * 3 - 1, radius * 4);
+            let survive = (radius * 2, radius * 5);
+            assert!(lazy.set_range_rule(radius, birth, survive));
+            assert!(full.set_range_rule(radius, birth, survive));
+            lazy.soup(0.0, 0.0, 20.0, 0.45, 99);
+            full.soup(0.0, 0.0, 20.0, 0.45, 99);
+            for generation in 0..60 {
+                let keys = |w: &HatWorld| -> Set<CellKey> { w.live().iter().map(|&c| w.key_of(c)).collect() };
+                assert_eq!(keys(&lazy), keys(&full), "radius {radius} generation {generation}");
+                lazy.step();
+                full.step();
+            }
+        }
+    }
+
+    #[test]
+    fn balls_fit_the_count_mask() {
+        let mut w = HatWorld::new();
+        w.load_around(0.0, 0.0, 200.0);
+        let center: Vec<u32> = (0..w.frames.len() as u32).filter(|&c| { let p = w.center(c); p.0.hypot(p.1) < 60.0 }).collect();
+        for &c in &center {
+            assert!(w.cells_within(c, MAX_RADIUS as u32).len() < 128);
+        }
+    }
+
+    #[test]
+    fn keys_mean_the_same_in_any_world() {
+        let mut first = HatWorld::new();
+        first.load_around(300.0, -200.0, 30.0);
+        let cells: Vec<u32> = (0..first.frames.len() as u32).step_by(37).collect();
+        let keys: Vec<CellKey> = cells.iter().map(|&c| first.key_of(c)).collect();
+        let mut other = HatWorld::new();
+        for (key, &cell) in keys.iter().zip(&cells) {
+            let there = other.cell_of(*key).expect("the hat exists");
+            assert_eq!(other.key_of(there), *key);
+            assert_eq!(other.center(there), first.center(cell));
+        }
+    }
+
+    #[test]
+    fn keys_of_no_hat_are_refused() {
+        let mut w = HatWorld::new();
+        assert_eq!(w.cell_of([0, 1, 1, 1, 1]).is_some(), false);
+        assert_eq!(w.cell_of([7, 0, 0, 0, 0]), None);
+        assert_eq!(w.cell_of([-1, 0, 0, 0, 0]), None);
+        assert_eq!(w.cell_of([0, i32::MAX, i32::MIN, i32::MAX, i32::MIN]), None);
+    }
+
+    #[test]
+    fn painting_by_key_and_exporting_round_trips() {
+        let mut w = HatWorld::new();
+        let keys: Vec<CellKey> = (0..6).map(|c| w.key_of(c * 5)).collect();
+        w.scratch = keys.iter().flatten().map(|&v| v as u32).collect();
+        let n = w.scratch.len();
+        assert_eq!(w.paint_keys_from_scratch(n, true), 0);
+        assert_eq!(w.population, 6);
+        let mut exported: Vec<CellKey> = w.export_live().chunks_exact(5).map(|k| [k[0], k[1], k[2], k[3], k[4]]).collect();
+        exported.sort();
+        let mut expected = keys.clone();
+        expected.sort();
+        assert_eq!(exported, expected);
+    }
+
+    #[test]
+    fn mirrored_hats_sit_in_h_metatiles_only() {
+        let mut w = HatWorld::new();
+        w.load_around(0.0, 0.0, 300.0);
+        let mirrored = (0..w.frames.len() as u32).filter(|&c| w.is_mirrored(c)).count();
+        assert!(mirrored > 0);
+        assert!((0..w.frames.len() as u32).filter(|&c| w.is_mirrored(c)).all(|c| w.metatile(c) == 0));
+        for kind in 0..4 {
+            assert!((0..w.frames.len() as u32).any(|c| w.metatile(c) == kind), "kind {kind}");
+        }
+    }
+
+    #[test]
+    fn the_live_list_follows_the_field() {
+        let mut w = HatWorld::new();
+        assert!(w.set_rule(1 << 2 | 1 << 5, 1 << 3));
+        w.soup(0.0, 0.0, 40.0, 0.4, 5);
+        for _ in 0..60 {
+            w.step();
+            let mut listed: Vec<u32> = w.live().to_vec();
+            listed.sort_unstable();
+            assert_eq!(listed, live(&w));
+        }
+        w.clear();
+        assert!(w.live().is_empty());
+        assert_eq!(w.field_hash(), 0);
     }
 
     /// Adjacency worked out directly from shared points, in a small patch.

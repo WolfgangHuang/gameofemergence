@@ -4,6 +4,7 @@
 pub mod hat;
 pub mod hat_world;
 pub mod life;
+pub mod search;
 pub mod status;
 
 use hat_world::HatWorld;
@@ -200,6 +201,27 @@ pub unsafe extern "C" fn hat_set_rule(w: *mut HatWorld, birth: u32, survive: u32
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hat_set_table(w: *mut HatWorld, n: u32) {
     unsafe { (*w).set_table_from_scratch(n as usize) }
+}
+
+/// Born with birth_low..=birth_high live cells within `radius` rings, surviving with
+/// survive_low..=survive_high. Returns 0 if this rule cannot be run.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hat_set_range_rule(w: *mut HatWorld, radius: u32, birth_low: u32, birth_high: u32, survive_low: u32, survive_high: u32) -> u32 {
+    let count = |n: u32| n.min(u8::MAX as u32) as u8;
+    unsafe { (*w).set_range_rule(count(radius), (count(birth_low), count(birth_high)), (count(survive_low), count(survive_high))) as u32 }
+}
+
+/// Applies `n` values previously written to the scratch buffer, five per cell.
+/// Returns how many cells the tiling does not have.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hat_paint_keys(w: *mut HatWorld, n: u32, alive: u32) -> u32 {
+    unsafe { (*w).paint_keys_from_scratch(n as usize, alive != 0) }
+}
+
+/// The live cells, five values each. Valid until the next call into the engine.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hat_live(w: *mut HatWorld) -> *const i32 {
+    unsafe { (*w).export_live().as_ptr() }
 }
 
 #[unsafe(no_mangle)]

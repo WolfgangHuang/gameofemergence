@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { formatRleFile, parseRle, parseRleFile, RleError, toRle } from '../src/patterns/rle.ts';
-import { buildLink, decodeCells, MAX_LINK_LENGTH, parseLink } from '../src/share/link.ts';
+import { buildLink, decodeCells, linkFromImport, MAX_LINK_LENGTH, parseLink } from '../src/share/link.ts';
 import { FAMILIES } from '../src/tiles/tiles.ts';
 
 const root = resolve(import.meta.dirname, '..');
@@ -140,7 +140,24 @@ console.log('ok   checked all presets in a link');
   const link = parseLink(hash);
   report(content === 'exact' && link.tile.morph === 45 && link.table === 'hat-glider-a' && same(link.recipe, recipe), 'hat link with morph, table and recipe');
   const painted = await buildLink({ settings: { ...settings, tile: hat }, recipe: null, generation: 0, population: 3, cells: null });
-  report(painted.content === 'hat-cells', 'painted hat cells are reported as not shared');
+  report(painted.content === 'hat-cells', 'hat cells that are not available are reported as not shared');
+
+  const keys = [1, 10, -20, 30, -40, 8, 11, -21, 31, -41];
+  const kept = await buildLink({ settings: { ...settings, tile: hat }, recipe: null, generation: 9, population: 2, cells: null, hatCells: keys });
+  report(kept.content === 'exact' && same(Array.from(parseLink(kept.hash).hatCells), keys) && parseLink(kept.hash).problems.length === 0, `hat cells go by their place: ${kept.hash}`);
+
+  const range = { radius: 2, birth: [5, 7], survive: [3, 8] };
+  const ranged = await buildLink({ settings: { ...settings, tile: { ...hat, neighbourhood: 0 }, range }, recipe: null, generation: 0, population: 2, cells: null, hatCells: keys });
+  const back = parseLink(ranged.hash);
+  report(same(back.range, range) && back.rule === null && back.problems.length === 0, `a rule on rings survives: ${ranged.hash}`);
+
+  const many = Array.from({ length: 5000 * 5 }, (_, i) => (i % 5 === 0 ? 0 : 100000 + i));
+  const toomany = await buildLink({ settings: { ...settings, tile: hat }, recipe: null, generation: 9, population: 5000, cells: null, hatCells: many });
+  report(toomany.content === 'too-many' && toomany.hash.length <= MAX_LINK_LENGTH, 'too many hat cells keep the settings');
+
+  report(linkFromImport(`{"format":"game-of-emergence-find","link":${JSON.stringify(ranged.hash)}}`) === ranged.hash, 'a find file opens');
+  report(linkFromImport(`http://localhost:5173/${ranged.hash}\n`) === ranged.hash, 'a whole link opens');
+  for (const text of ['', 'nothing', '{"link":3}', '{broken', '#foo=1']) report(linkFromImport(text) === null, `refuses to open ${JSON.stringify(text)}`);
 }
 
 // Anything can arrive in a fragment.
@@ -167,6 +184,21 @@ const hostile = [
   ['s=0,0,10,10,0.3,-1', 'random field'],
   ['a=x,y,bo', 'cells'],
   ['a=0,0,', 'cells'],
+  ['h=1,2,3,4,5', 'cells'],
+  ['f=hat&h=1,2,3,4', 'cells'],
+  ['f=hat&h=6,0,0,0,0', 'cells'],
+  ['f=hat&h=14,0,0,0,0', 'cells'],
+  ['f=hat&h=-1,0,0,0,0', 'cells'],
+  ['f=hat&h=1,2,3,4,x', 'cells'],
+  ['f=hat&h=1,2,3,4,1e30', 'cells'],
+  ['f=hat&h=1.5,2,3,4,5', 'cells'],
+  ['f=hat&h=', 'cells'],
+  ['r=R2B5-7S3-8', 'rule'],
+  ['f=hat&n=1&r=R2B5-7S3-8', 'rule'],
+  ['f=hat&r=R9B5-7S3-8', 'rule'],
+  ['f=hat&r=R2B0-7S3-8', 'rule'],
+  ['f=hat&r=R2B7-5S3-8', 'rule'],
+  ['f=hat&r=R2B5-7S3-999', 'rule'],
 ];
 for (const [part, problem] of hostile) report(parseLink(`#v=1&${part}`).problems.includes(problem), `rejects ${part}`);
 report(parseLink('#v=1&r=B012345678/S').rule.birth === 0b111111110, 'no birth from nothing on the plane');

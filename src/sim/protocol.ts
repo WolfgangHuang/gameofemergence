@@ -32,6 +32,10 @@ export type ToWorker =
   | { t: 'hatSeed'; cell: number; first: number; second: number }
   /** Cell ids of the hat tiling. */
   | { t: 'hatPaint'; cells: Uint32Array; alive: boolean }
+  /** Places in the hat tiling, five numbers each, which unlike ids hold in any session. */
+  | { t: 'hatPaintKeys'; cells: Int32Array; alive: boolean }
+  /** All cells within `radius` rings count as neighbours. */
+  | { t: 'hatRange'; radius: number; birth: [number, number]; survive: [number, number] }
   /** Positions in lattice units. */
   | { t: 'hatSoup'; x: number; y: number; radius: number; density: number; seed: number }
   | { t: 'hatFrame'; x: number; y: number; radius: number; spare: ArrayBuffer | null }
@@ -64,7 +68,9 @@ export type FromWorker =
   /** Newly generated cells, five numbers each. Always sent before their first frame. */
   | { t: 'hatCells'; cells: Int32Array; capped: boolean }
   | ({ t: 'frame'; data: Uint8Array<ArrayBuffer> } & FrameWindow & Stats)
-  /** Flat x, y pairs, or null on the hat tiling and above the requested maximum. */
-  | { t: 'cells'; id: number; cells: Int32Array | null; generation: number; population: number }
+  /** Flat x, y pairs, or null on the hat tiling and above the requested maximum. There, `hatCells` has five numbers per cell. */
+  | { t: 'cells'; id: number; cells: Int32Array | null; hatCells: Int32Array | null; generation: number; population: number }
+  /** How many cells of a list the tiling does not have. */
+  | { t: 'hatMissing'; count: number }
   /** Nothing changed since the last frame for this window. Returns the spare buffer. */
   | ({ t: 'unchanged'; spare: ArrayBuffer | null } & Stats);

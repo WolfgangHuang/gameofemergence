@@ -25,6 +25,9 @@ interface Exports {
   hat_set_rule(w: number, birth: number, survive: number): number;
   hat_set_edges_only(w: number, edgesOnly: number): void;
   hat_set_table(w: number, n: number): void;
+  hat_set_range_rule(w: number, radius: number, birthLow: number, birthHigh: number, surviveLow: number, surviveHigh: number): number;
+  hat_paint_keys(w: number, n: number, alive: number): number;
+  hat_live(w: number): number;
   hat_seed_pair(w: number, cell: number, first: number, second: number): void;
   hat_step(w: number, n: number): void;
   hat_clear(w: number): void;
@@ -226,6 +229,19 @@ function handle(m: ToWorker) {
       version++;
       break;
     }
+    case 'hatPaintKeys': {
+      const n = m.cells.length;
+      const ptr = e.hat_scratch(hat, n);
+      new Int32Array(e.memory.buffer, ptr, n).set(m.cells);
+      const count = e.hat_paint_keys(hat, n, m.alive ? 1 : 0);
+      if (count > 0) post({ t: 'hatMissing', count });
+      version++;
+      break;
+    }
+    case 'hatRange':
+      e.hat_set_range_rule(hat, m.radius, m.birth[0], m.birth[1], m.survive[0], m.survive[1]);
+      version++;
+      break;
     case 'clear':
       if (hatActive) e.hat_clear(hat);
       else e.world_clear(world);
@@ -251,11 +267,17 @@ function handle(m: ToWorker) {
     case 'exportCells': {
       const { generation, population } = stats();
       let cells: Int32Array | null = null;
+      let hatCells: Int32Array | null = null;
       if (!hatActive && population <= m.max) {
         const ptr = e.world_export(world);
         cells = new Int32Array(e.memory.buffer, ptr, population * 2).slice();
       }
-      post({ t: 'cells', id: m.id, cells, generation, population }, cells ? [cells.buffer] : []);
+      if (hatActive && population <= m.max) {
+        const ptr = e.hat_live(hat);
+        hatCells = new Int32Array(e.memory.buffer, ptr, population * 5).slice();
+      }
+      const transfer = [cells, hatCells].flatMap((list) => (list ? [list.buffer as ArrayBuffer] : []));
+      post({ t: 'cells', id: m.id, cells, hatCells, generation, population }, transfer);
       break;
     }
     case 'hatFrame':

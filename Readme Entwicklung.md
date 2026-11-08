@@ -1,6 +1,6 @@
 # Game of Emergence: Entwicklung
 
-Stand: 8. November 2026, nach Schritt 4 von ursprünglich 5, ergänzt um den Hat-Glider, den Torus, das Teilen per Link und den 3D-Donut.
+Stand: 8. November 2026, nach Schritt 4 von ursprünglich 5, ergänzt um den Hat-Glider, den Torus, das Teilen per Link, den 3D-Donut und den Suchmodus.
 
 Dieses Dokument hält fest, was gebaut wurde, warum es so gebaut ist und was als Nächstes ansteht. Installation und Bedienung stehen in der [Readme.md](Readme.md).
 
@@ -26,6 +26,7 @@ Rust/WASM-Engine (engine/src/)
 | `engine/src/hat.rs` | Hierarchie der Hat-Kachelung, exakte Koordinaten |
 | `engine/src/hat_world.rs` | Simulation auf dem Hat-Graphen, stückweise Erzeugung |
 | `engine/src/lib.rs` | C-ABI-Exporte für den Worker |
+| `engine/src/search.rs`, `engine/src/bin/search.rs` | Suchmodus für travelling patterns: Kern und Kommandozeile |
 | `src/sim/worker.ts`, `protocol.ts` | Simulationsschleife, Nachrichten zwischen Stage und Worker |
 | `src/tiles/tiles.ts` | Periodische Kachelungen, Vorlagen, Regelvorschläge |
 | `src/render/renderer.ts` | Periodisches Feld, 3D-Donut und Nachglühen |
@@ -67,6 +68,10 @@ Links mit Einstellungen und Zellen, dazu RLE-Import und -Export, siehe „Teilen
 ### Nachtrag: 3D-Donut
 
 Der Torus als drehbarer Ring, nur zum Anschauen, siehe „3D-Donut“.
+
+### Nachtrag: Suchmodus
+
+Kommandozeilen-Suche nach Glidern mit reinen B/S-Regeln auf dem Hat, dazu Regeln auf mehreren Ringen und Hat-Zellen im Link, siehe „Suchmodus“.
 
 ## Designentscheidungen
 
@@ -162,6 +167,8 @@ Geöffnete Links stehen immer pausiert bei Generation 0, der Zählerstand wird n
 
 **Zufallsfelder:** `Stage` merkt sich je Feld, ob es seit dem letzten Leeren nur eine einzige Zufallsfüllung erhalten hat. Jede Malaktion löscht diese Angabe. Auf dem Hat hing die Verteilung zunächst von den Kachel-Ids ab, also davon, wo die Ansicht vorher war. `HatWorld::soup` geht deshalb jetzt nach Position.
 
+**Hat-Zellen:** Sie stehen als `h=` im Link, je 5 Zahlen: Drehung plus 8 falls gespiegelt, dann beide Anteile der Position. Das ist genau, was `hat_cells` schon exportiert. Kachel-Ids wären abhängig von der Erzeugungsreihenfolge. Regeln auf mehreren Ringen stehen wie andere in `r=`, zum Beispiel `r=R2B5-7S3-8`, gelten aber nur für den Hat mit Kanten und Ecken. Alte Links funktionieren unverändert. Zustände einer Pattern-Tabelle passen nicht in diese Form, solche Links enthalten weiterhin nur die Einstellungen.
+
 **Links sind fremde Eingaben.** `parseLink` prüft jeden Wert und meldet Verworfenes in der Oberfläche, der Rest des Links gilt weiter. Begrenzt sind Größen, Koordinaten, Zellzahl (2 Millionen) und die entpackte Länge (16 MB), damit ein kurzer Link nicht den Tab lahmlegt. Unbekannte Versionen werden ganz ignoriert.
 
 **RLE-Import:** Kommentare und Kopfzeile sind optional, die alte Form `23/3` und der Zusatz `:T100,100` werden verstanden. Bringt das Muster eine Regel mit, wird sie aktiv. Mehrzustandsmuster und nicht-totalistische Regeln werden mit einer Meldung abgelehnt. Der Export schreibt die Torus-Größe so in die Regel, wie Golly es tut.
@@ -240,6 +247,43 @@ Gemessen über 5.000 Generationen. Tempo und Richtung sind nur für 4 Läufe mit
 
 **Sechsecke:** Ein Fund auf B36/S234 passt dazu. Zufallsfelder bilden dort einen scharfen, fast gleichwinkligen sechseckigen Umriss, der ab etwa Generation 300 nicht mehr wächst, während es innen weiterarbeitet. Gemessen wurden die Kantenrichtungen 45–46° modulo 60°, bei verschiedenen Startwerten, Größen und Orten. Das Paper erklärt die Richtung: Die Graphmetrik des Hats hat sechs schnelle Achsen bei 45,523°, entlang derer auch die Glider fliegen. Sie sind eine Eigenschaft der Kachelung und nicht der Regel. Das Paper nennt chaotische Wachstumsfronten dagegen nahezu kreisförmig, der Umriss hier wächst aber gar nicht. Warum die Regel gerade an diesen Kanten anhält, ist ungeklärt. Ein Beitrag aus dem HatLife-Umfeld nennt ähnliche sechseckig begrenzte Regionen mit der Regel `B3456S012345N2`. Den Beitrag kennen wir nur als Zitat, und `N2` steht vermutlich für eine größere Nachbarschaftsreichweite, die die Engine nicht unterstützt. Geprüft ist die Regel also nicht.
 
+### Suchmodus
+
+`engine/src/bin/search.rs` sucht auf derselben Engine wie die Seite nach Mustern, die über den Hat wandern. Bedienung steht in der Readme.
+
+**Reihenfolge:** Jede Regel wird zuerst gescreent, das ergibt den Katalog `catalog.jsonl`. Nur stabile und chaotische Regeln werden danach durchsucht, mit Polyhats, Korridor-Ketten, Soups und Mutation. Das Budget `--max-seeds-per-rule` gilt je Familie, sonst bekämen die Korridore bei genau den interessanten Regeln nichts mehr ab.
+
+**Ringe** sind die Graphdistanz über Kanten und Ecken, unabhängig von der Nachbarschaft der Regel. Gemessen hat ein Ring 4,1 bis 4,3 Einheiten, nahe am Start ab 3,6. Während des Laufs prüft die Suche billig die euklidische Distanz, Treffer werden dann per Breitensuche exakt gemessen. Die Stoppdistanz richtet sich nach dem breitesten Ring. Mit 4,1 hielten Flüge entlang der schnellen Achsen bei 290 Ringen an, und die Suche hätte nie einen Kandidaten gemeldet. Gefunden hat das die Positivkontrolle.
+
+**Positivkontrolle:** `search control` fliegt Glider A durch dieselben Prüfungen. Einen 2-Zustands-Glider gibt es ja nicht, ohne Kontrolle hieße „nichts gefunden“ also gar nichts. Ein Test schickt den Flug auch durch die Bewertung bis zum Fund. Gemessen über 300 Ringe: Tempo 2,13 pro Generation, Paper 2,14. Vier von acht Starts bestehen alle Patches, die übrigen schicken zwei Glider los.
+
+**Abweichungen von der ursprünglichen Aufgabe:**
+
+| Vorgabe | Umgesetzt | Warum |
+|---|---|---|
+| Zell-IDs im Link | Positionsschlüssel, 5 Zahlen je Zelle | IDs hängen von der Erzeugungsreihenfolge ab |
+| Population höchstens 3× Start | zusätzlich mindestens 24, höchstens 60 (`--pop-floor`) | Glider A startet mit 2 Zellen und erreicht 15–17, 3× Start hätte ihn abgelehnt |
+| Fläche wächst linear = explosiv | belegte Fläche, in Feldern von 16 Einheiten | Zwei auseinanderfliegende Glider haben auch eine wachsende Bounding-Box |
+| Eine Soup im Screening | drei, explosiv genügt bei einer (`--screen-soups`) | eine einzelne Soup ist Zufall |
+| Patches 100/200/400 mit Rand | Feld erzeugt, Abbruch 3 bis 5 Ringe vor dem Rand | ohne Rand wäre der Test leer, das Feld wächst sonst bei Bedarf |
+| eine Datei pro Fund | alles Bewegte, sonst der erste Fund je Regel und Periode (`--files all`) | Hunderttausende Stillleben helfen niemandem |
+| Prozesse | Threads, je eine eigene Welt | gleiches Ergebnis, kein Serialisieren. Absturz einer Regel beendet den Lauf, `--resume` entfällt, er setzt immer fort |
+| `--tiling spectre` | gleiche Kachelung in Spectre-Form | Es gibt nur die Kachelung des Hats, Ergebnisse sind identisch. Der chirale Spectre fehlt noch |
+
+**Grenzen des Screenings:** Es wirft Regeln wie Seeds (B2/S) weg, die explodieren und trotzdem Glider haben können. `--keep explosive,stable,chaotic` nimmt sie mit. Die Populationsschranke beendet solche Läufe aber früh, das Ausschneiden hilft dort nur begrenzt.
+
+**Herausgeschnittene Muster:** Ein Glider, der Trümmer hinterlässt, fällt auf dem Gesamtfeld durch jeden Test. Weit vom Start entfernte Teile werden deshalb einzeln noch einmal geprüft. In `results.jsonl` steht dann `derived_from`.
+
+**Späte Entstehung:** Die Kriterien gelten für das fliegende Muster, die normale Suche wendet sie aber schon ab dem Start an: Nach 16 Generationen (Soups 200) sind höchstens 24 bis 60 Zellen erlaubt, und nach 300 Generationen ohne Ausdehnung ist Schluss. Das R-Pentomino wäre so in Life vermutlich früh gestoppt worden. Die Familien `late` und `latesoup` trennen deshalb Entstehung und Flug. Ein Seed darf lange brennen, und der Lauf endet, sobald eine Zelle 200 Einheiten entfernt ist. Dann werden entfernte Teile ausgeschnitten und einzeln streng geprüft. Ein großes Muster kann so nie selbst als Traveller gelten, nur ein kleines. In `derived_after_generations` steht, wann das Teil entstand. In einer Stichprobe von 150 Regeln entstand so bei `B3456/S2347` erst bei Generation 1.101 ein Oszillator der Periode 179, bei bis zu 60 Zellen. Glider fand sie dort nicht. Die Kontrolle mit zwei Glidern A prüft das Ausschneiden, aber nicht den Weiterflug, denn ausgeschnittene Teile tragen nur 2 Zustände.
+
+**Anti-Hat-Linien:** Das Korridormodell ist aus der Kachelung gemessen, nicht aus der Literatur. Gleich orientierte gespiegelte Hats liegen auf Geraden entlang 46°, 106° und 166°, im Abstand 22 oder 34 Einheiten. Das sind die schnellen Achsen aus Edmonds Paper. Die Linien sind bis zu 167 Hats lang (begrenzt durch die untersuchte Fläche) und sehr gerade, im Median 0,42 Einheiten Abweichung. Parallele Nachbarn liegen meist rund 10 Einheiten auseinander. Der erste Versuch, Linien über den kürzesten Abstand von 10 Einheiten zu finden, ergab nur Paare. Trevorrows Vermutung selbst haben wir weiterhin nicht im Original gelesen.
+
+**Reproduzierbar:** Ergebnisse hängen nur von Positionen und vom Startwert ab, nicht von Zell-IDs. `results.jsonl` ist byte-gleich bei 1 und 16 Workern, und drei gemischte Batches ergeben byte-gleich den Gesamtlauf. Der Fingerabdruck in `fingerprint.txt` verhindert, dass Läufe mit anderen Einstellungen gemischt werden. Gezählte Vorkommen (`occurrences`) sind Untergrenzen, weil Seeds abbrechen, sobald sie einen schon gesehenen Zustand erreichen.
+
+**Build ohne C-Compiler:** musl und `rust-lld`, siehe `engine/.cargo/config.toml`. Das Ergebnis ist ein statisches Binary. Das `malloc` von musl hat eine globale Sperre: 16 Worker brauchten fast 9-mal so viel CPU pro Regel wie einer. Darum hat das Binary einen eigenen kleinen Allocator mit Freilisten pro Thread, danach waren es 1,2-mal so viel, und ein Kern wurde doppelt so schnell.
+
+**Regeln auf mehreren Ringen** (`R2B5-7S3-8`) zählen alle Zellen innerhalb von r Ringen über Kanten und Ecken, ohne die Zelle selbst. Bei r = 2 sind das 18 bis 22 Zellen, bei r = 3 sind es 38 bis 45. Die Listen entstehen, wenn eine Zelle erstmals lebt, und die Umgebung wird entsprechend weiter erzeugt (8 Einheiten je Ring). Ein Test vergleicht das Erzeugen bei Bedarf mit einem von Anfang an erzeugten Feld.
+
 ### Verwandte Projekte
 
 - **[Aperiodic Life](https://bellissimogiorno.github.io/aperiodic-life/)** von Murdoch J. Gabbay: Webversion für Life auf Einstein-Hat, Penrose P3, Quadrat- und Hexagon-Gitter, mit kuratierten Konfigurationen und laufenden Mustern. Eine gute Referenz zum Vergleichen, Code wurde hier nicht übernommen.
@@ -263,17 +307,20 @@ npm test        # Engine-Tests, Musterbibliothek, Kachel-Geometrie, Hat-Glider, 
 npm run bench   # Geschwindigkeit
 ```
 
-Native Rust-Tests bräuchten einen C-Linker. Die Engine-Tests laufen deshalb unter WASI in Node (`scripts/wasi-run.mjs`), `npm test` installiert das Target `wasm32-wasip1` bei Bedarf selbst.
+Die Engine-Tests laufen nativ, `npm test` installiert das Target `x86_64-unknown-linux-musl` bei Bedarf selbst. Es braucht keinen C-Compiler, siehe `engine/.cargo/config.toml`.
 
-Letzter Stand: alle grün, mit einer Einschränkung: `npm test` brach am 8. November einmal mit einem Speicherzugriffsfehler (SIGSEGV) in Node ab, während die Engine-Tests liefen. Das geschah im ersten von gut 25 Läufen und kam danach nicht wieder, auch nicht bei unverändertem Code. Ein erneuter Lauf genügt dann. Die Ursache ist nicht geklärt, siehe auch `check-hat-glider.mjs` unten. Ein Fehler in der Engine selbst scheidet als direkte Ursache aus, weil WASM-Code aus seiner Sandbox heraus Node nicht zum Absturz bringen kann.
+**Warum nicht mehr unter WASI:** Bis zum Suchmodus liefen sie in Node über WASI. Dort starb der Node-Prozess reproduzierbar mit einem Speicherzugriffsfehler (Exit-Code 139). Einzeln gestartet traf es genau die Tests, die große Felder erzeugen, in der ganzen Suite aber auch schon `neighbour_counts_stay_small`, der gar keine Welt anlegt. Große Felder sind also ein Auslöser, aber keine vollständige Erklärung. Die V8-Schalter `--no-wasm-tier-up`, `--no-wasm-dynamic-tiering`, `--no-liftoff`, `--liftoff-only`, `--stack-size` und `--max-semi-space-size` helfen nicht, die eigentliche Ursache ist nicht geklärt. Der alte Stand lief unter gleicher Last durch, er erzeugte in den Tests aber auch keine so großen Felder. Die Engine betrifft das nicht: Als reines WASM, wie auf der Seite, läuft derselbe Code sauber, zuletzt mit 538.000 Zellen und 389 MB. `check-hat-glider.mjs` prüft das jetzt mit. Tests auf 64 Bit sagen allerdings nichts über Fehler, die nur auf 32 Bit auftreten. Die Skripte unten decken das nur teilweise ab.
 
-- **51 Engine-Tests:** unter anderem Vergleich mit naiven Referenzen auf allen Gittern, auch auf dem Torus mit Seiten, die kein Vielfaches von 64 sind, und mit B0, Überlappungsfreiheit und Passgenauigkeit der Hats, Flächenfaktor φ⁴ pro Ebene, langfristige Gültigkeit gemeldeter Zustände.
+Letzter Stand: alle grün.
+
+- **74 Engine-Tests:** unter anderem Vergleich mit naiven Referenzen auf allen Gittern, auch auf dem Torus mit Seiten, die kein Vielfaches von 64 sind, und mit B0, Überlappungsfreiheit und Passgenauigkeit der Hats, Flächenfaktor φ⁴ pro Ebene, langfristige Gültigkeit gemeldeter Zustände.
 - **`check-patterns.mjs`:** Simuliert alle 24 Muster und prüft Periode, Verschiebung und Wachstum. R-Pentomino und Acorn erreichen ihre aus der Literatur bekannten Endpopulationen 116 und 633.
 - **`check-tiles.mjs`:** Liest die Nachbarn geometrisch aus den Polygonen ab und vergleicht das Ergebnis einer davon gesteuerten naiven Simulation mit der Engine. Prüft außerdem für alle Vorlagen, dass die Kacheln an der Naht eines Torus passen.
-- **`check-hat-glider.mjs`:** Fliegt Glider A von 11 Startkacheln und vergleicht Population, Richtung und Tempo mit dem Paper. Die langen Flüge laufen hier statt in den Engine-Tests, weil Node im WASI-Testaufbau bei solchen Läufen mit einem Speicherzugriffsfehler abbricht. Direkt als WASM läuft derselbe Code sauber, die Ursache ist nicht geklärt.
+- **`check-hat-glider.mjs`:** Fliegt Glider A von 11 Startkacheln und vergleicht Population, Richtung und Tempo mit dem Paper. Prüft außerdem als reines WASM ein großes Feld, Zellen nach Position und eine Regel auf 2 Ringen.
+- **`search control`:** Nicht Teil von `npm test`. Prüft die Messung des Suchmodus am bekannten Glider, siehe „Suchmodus“.
 - **`check-share.mjs`:** Rundläufe für RLE und Links über alle Vorlagen, dazu rund 30 fehlerhafte oder böswillige Eingaben, unter anderem eine Deflate-Bombe.
 
-Die Browsertests liefen mit Playwright und liegen nicht im Repository. Das gilt auch für den Torus. Er wurde in Headless-Chrome über das DevTools-Protokoll geprüft: alle Kachelfamilien, Malen über die Naht, Glider-Umlauf, B0, Wechsel zwischen den Feldern, 4096×4096. Beim Verschieben über die Naht stimmten die Bilder bis auf den Versatz pixelgenau überein. Links wurden dort ebenfalls geprüft: erzeugen, in einem frischen Tab öffnen, Bilder vergleichen. Auf Quadraten und Dreiecken war das pixelgenau, auf schrägen Hexagonen und dem Hat wichen bei gleicher Population höchstens 0,3 % der dunklen Pixel ab, vermutlich wegen der gerundeten Kameraposition. Auch der Donut wurde dort geprüft: Seitenverhältnisse, Spiegelung, Drehen, Zoomen, gesperrte Tasten, Hexagone und Dreiecke, 4096×4096. Automatische Tests hat er keine.
+Die Browsertests liefen mit Playwright und liegen nicht im Repository. Der Suchmodus wurde in Headless-Chrome über das DevTools-Protokoll geprüft: Funde mit Kanten, Kanten+Ecken und 2 Ringen per Link geöffnet, Fund-Datei importiert, einen geladenen Fund erneut geteilt. Rule-Panel und Statusanzeige nennen dabei dieselbe Regel und Periode wie das CLI. Automatische Tests hat das nicht. Das gilt auch für den Torus. Er wurde in Headless-Chrome über das DevTools-Protokoll geprüft: alle Kachelfamilien, Malen über die Naht, Glider-Umlauf, B0, Wechsel zwischen den Feldern, 4096×4096. Beim Verschieben über die Naht stimmten die Bilder bis auf den Versatz pixelgenau überein. Links wurden dort ebenfalls geprüft: erzeugen, in einem frischen Tab öffnen, Bilder vergleichen. Auf Quadraten und Dreiecken war das pixelgenau, auf schrägen Hexagonen und dem Hat wichen bei gleicher Population höchstens 0,3 % der dunklen Pixel ab, vermutlich wegen der gerundeten Kameraposition. Auch der Donut wurde dort geprüft: Seitenverhältnisse, Spiegelung, Drehen, Zoomen, gesperrte Tasten, Hexagone und Dreiecke, 4096×4096. Automatische Tests hat er keine.
 
 ## Bekannte Lücken
 
@@ -284,7 +331,9 @@ Die Browsertests liefen mit Playwright und liegen nicht im Repository. Das gilt 
 - **Weit herausgezoomt** wird beim Hat ab einem Sichtradius von 700 Rastereinheiten nichts Neues erzeugt.
 - **Auto-Pause läuft nach.** Bei Maximaltempo hält die Simulation einige Tausend Generationen zu spät an, weil die Oberfläche den Status nur mit der Bildrate erfährt. Am Ergebnis ändert das nichts, aber Glider sind dann schon aus dem Bild.
 - **Formwechsel deutet Zellen um.** Beim Wechsel von Familie oder Nachbarschaft bleiben die Zellen stehen und bedeuten auf dem neuen Gitter etwas anderes.
-- **Hat-Zellen im Link:** Von Hand gemalte Zellen und platzierte Glider auf dem Hat gehen nicht in einen Link, nur Einstellungen, Pattern-Tabelle und Zufallsfelder. Kachel-Ids hängen von der Erzeugungsreihenfolge ab, es bräuchte also Positionen. Die Seite weist darauf hin.
+- **Hat-Zellen im Link:** Platzierte Glider mit Zuständen gehen nicht in einen Link, nur Einstellungen und Pattern-Tabelle. Die Seite weist darauf hin.
+- **Regeln auf mehreren Ringen** lassen sich nur per Link oder Fund-Datei öffnen, nicht im Rule-Panel einstellen.
+- **Der Suchmodus** kennt nur die Hat-Kachelung, keinen chiralen Spectre.
 - **Link kennt die Generation nicht.** Der Zählerstand beginnt beim Öffnen wieder bei 0, und bei der Rückfallstufe „Start des Laufs“ ist der Fortschritt verloren.
 - **RLE** nur für Vierecke mit 8 Nachbarn. Andere Programme würden Muster auf anderen Gittern ohnehin anders deuten.
 - **Musterbibliothek** nur für Vierecke mit 8 Nachbarn, dazu ein Glider auf dem Hat.
@@ -303,7 +352,7 @@ Die Browsertests liefen mit Playwright und liegen nicht im Repository. Das gilt 
    - Vor dem Bau klären: Welche Typen sollen verformbar sein, und wie viele Nachbarn ergeben sich? Das Prüfskript `check-tiles.mjs` kann die Tabellen wie bei den anderen Formen gegen die Geometrie absichern.
    - Für die Regeln ist wieder ein Suchlauf nötig.
 2. **Mehr Hat-Muster und Regeln.** Glider C (ein Dreifach-Glider) aus monotile-ca lässt sich wie Glider A übernehmen. *Worms* von Trevorrow und die Regel von Gabbay nur nach Klärung der Rechte, monotile-ca nutzt sie mit deren Erlaubnis. Dazu eine Kamera, die einem Muster folgt, und die in HatLife übliche größere Nachbarschaftsreichweite (`N2`).
-3. **Suchmodus.** Ein Modus, mit dem man auf den exotischeren Feldern, also vor allem auf den Einstein-Kacheln, nach Mustern suchen kann. Vorerst nur als Idee notiert, Umfang und Umsetzung sind noch offen.
+3. **Suchmodus auswerten.** Der volle Lauf steht noch aus, siehe „Suchmodus“.
 4. **Test auf echter Hardware.** GPU, Firefox, Safari und Touch, wie unter „Bekannte Lücken“ beschrieben.
 5. **Deployment** auf den eigenen Ubuntu-Server bei Hetzner (CX22). Die Seite ist statisch, der Server muss `.wasm` als `application/wasm` ausliefern. COOP/COEP-Header werden erst nötig, falls später WASM-Threads dazukommen. Erst danach funktionieren geteilte Links auch für andere. Der Server sollte HTTPS nutzen, sonst steht das automatische Kopieren in die Zwischenablage nicht zur Verfügung.
 6. **Mögliche Erweiterungen, noch nicht entschieden:**

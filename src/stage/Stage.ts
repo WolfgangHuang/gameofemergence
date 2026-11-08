@@ -1,5 +1,6 @@
 import { HatScene } from '../render/HatScene';
 import { brushReach, Renderer } from '../render/renderer';
+import type { RangeRule } from '../patterns/rule';
 import type { Camera, Recipe } from '../share/link';
 import type { Shape } from '../patterns/rle';
 import type { FromWorker, Stats, ToWorker, TorusSize } from '../sim/protocol';
@@ -38,6 +39,8 @@ interface SavedCamera {
 
 export interface FieldSnapshot {
   cells: Int32Array | null;
+  /** Places in the hat tiling, five numbers each. */
+  hatCells: Int32Array | null;
   generation: number;
   population: number;
   /** Set while the field still follows from a single random fill. */
@@ -96,6 +99,8 @@ export class Stage {
   private lastHatPoint: Point | null = null;
   capped = false;
   onCapped: (capped: boolean) => void = () => {};
+  /** A list of hat cells named places where the tiling has no such hat. */
+  onHatMissing: () => void = () => {};
 
   private running = false;
   private frameInFlight = false;
@@ -246,6 +251,11 @@ export class Stage {
     this.viewChanged();
   }
 
+  setHatRange(range: RangeRule) {
+    this.send({ t: 'hatRange', radius: range.radius, birth: range.birth, survive: range.survive });
+    this.frameDirty = true;
+  }
+
   setRule(birth: number, survive: number) {
     this.send({ t: 'rule', birth, survive });
     this.frameDirty = true;
@@ -305,6 +315,12 @@ export class Stage {
     this.frameDirty = true;
   }
 
+  /** Adds live cells of the hat tiling, given by their place in it. */
+  loadHatCells(cells: Int32Array<ArrayBuffer>) {
+    this.send({ t: 'hatPaintKeys', cells, alive: true }, [cells.buffer]);
+    this.frameDirty = true;
+  }
+
   setCamera(camera: Camera) {
     this.cellSize = clamp(camera.size * this.dpr, MIN_CELL, MAX_CELL);
     if (this.hatMode) this.hatCenter = [camera.x, camera.y];
@@ -323,7 +339,7 @@ export class Stage {
     const [x, y] = this.hatMode ? this.hatCenter : [this.centerX, this.centerY];
     const camera = { x, y, size: this.cellSize / this.dpr };
     return new Promise((resolve) => {
-      this.exports.set(id, ({ cells, generation, population }) => resolve({ cells, generation, population, recipe, camera }));
+      this.exports.set(id, ({ cells, hatCells, generation, population }) => resolve({ cells, hatCells, generation, population, recipe, camera }));
       this.send({ t: 'exportCells', id, max: maxCells });
     });
   }
@@ -335,7 +351,7 @@ export class Stage {
   // Worker
 
   private send(message: ToWorker, transfer: Transferable[] = []) {
-    if (message.t === 'paint' || message.t === 'hatPaint' || message.t === 'hatSeed') {
+    if (message.t === 'paint' || message.t === 'hatPaint' || message.t === 'hatPaintKeys' || message.t === 'hatSeed') {
       this.origin.pristine = false;
       this.origin.recipe = null;
     }
@@ -344,6 +360,10 @@ export class Stage {
 
   private receive(m: FromWorker) {
     if (m.t === 'ready') return;
+    if (m.t === 'hatMissing') {
+      this.onHatMissing();
+      return;
+    }
     if (m.t === 'cells') {
       this.exports.get(m.id)?.(m);
       this.exports.delete(m.id);

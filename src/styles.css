@@ -734,3 +734,13 @@ textarea.text-input {
   gap: 12px;
   padding: 20px 22px;
 }
+
+.file-chip {
+  display: inline-block;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.file-chip input {
+  display: none;
+}
