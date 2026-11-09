@@ -1,7 +1,9 @@
 // Looks for rules that stay lively on the grids of the 15 pentagon tilings, and
-// stores them in src/tiles/pentagons.json. A rule qualifies if from three random
-// fields it neither dies out nor floods the field, and if its population keeps
-// changing long after the start. That says it is lively, not that it is the best.
+// stores them in src/tiles/pentagons.json. On the unbounded plane, because that is
+// where a field starts: a torus hides a rule that takes over everything. A rule
+// qualifies if from three random fields it neither dies out nor runs away, and if its
+// population keeps changing long after the start. That says it is lively, not that
+// it is the best.
 //
 // Needs the engine built first: npm run wasm
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -11,7 +13,9 @@ import { Worker, isMainThread, parentPort, workerData } from 'node:worker_thread
 const root = resolve(import.meta.dirname, '..');
 const dataPath = resolve(root, 'src/tiles/pentagons.json');
 const SIDE = 72; // a multiple of every period
-const STEPS = 360;
+const STEPS = 800;
+/** Above this many times the start, a rule is taking over the unbounded field. */
+const MOST_GROWTH = 5;
 
 const subsets = (values, most) => {
   const list = [[]];
@@ -59,29 +63,29 @@ if (isMainThread) {
 } else {
   const { instance } = await WebAssembly.instantiate(readFileSync(resolve(root, 'src/sim/engine.wasm')));
   const e = instance.exports;
-  const area = SIDE * SIDE;
 
-  /** Density over the last part of a run, and how much the population still moves. */
+  /** How much the population still moves at the end, or null if the rule is out. */
   function run(topology, birth, survive, seed) {
     const w = e.world_new();
-    e.world_set_torus(w, SIDE, SIDE);
     e.world_set_topology(w, topology);
     e.world_set_rule(w, birth, survive);
     e.world_soup(w, 0, 0, SIDE, SIDE, 0.3, seed);
+    const start = Number(e.world_population(w));
     const seen = new Set();
-    let sum = 0;
+    let middle = 0;
     let last = 0;
-    for (let g = 0; g < STEPS; g++) {
+    let out = false;
+    for (let g = 0; g < STEPS && !out; g++) {
       e.world_step(w, 1);
       last = Number(e.world_population(w));
-      if (g === 60 && (last === 0 || last > 0.6 * area)) break;
-      if (g >= STEPS - 80) {
-        seen.add(last);
-        sum += last;
-      }
+      out = last === 0 || last > start * MOST_GROWTH;
+      if (g === STEPS / 2 - 1) middle = last;
+      if (g >= STEPS - 60) seen.add(last);
     }
-    e.world_free?.(w);
-    return { density: sum / 80 / area, moves: seen.size };
+    e.world_free(w);
+    // Fading away or still growing at the end only takes longer to show.
+    if (out || last > middle * 1.5 || last < middle * 0.5) return null;
+    return seen.size;
   }
 
   parentPort.on('message', (job) => {
@@ -93,23 +97,20 @@ if (isMainThread) {
       for (const survive of survives) {
         const [b, s] = [mask(birth), mask(survive)];
         let worst = Infinity;
-        let density = 0;
         for (const seed of [12345, 777, 40961]) {
-          const r = run(job.topology, b, s, seed);
-          if (r.density < 0.04 || r.density > 0.4 || r.moves < 15) {
+          const moves = run(job.topology, b, s, seed);
+          if (moves === null || moves < 12) {
             worst = -1;
             break;
           }
-          worst = Math.min(worst, r.moves);
-          density += r.density / 3;
+          worst = Math.min(worst, moves);
         }
-        if (worst > 0) found.push({ rule: name(birth, survive), worst, density });
+        if (worst > 0) found.push({ rule: name(birth, survive), worst });
       }
     }
-    // Lively first, with mid densities that show structure rather than noise.
     // Without survival a field is only noise, so such rules are not the default.
     const barren = (f) => f.rule.endsWith('/S');
-    found.sort((p, q) => barren(p) - barren(q) || q.worst * (1 - Math.abs(q.density - 0.15)) - p.worst * (1 - Math.abs(p.density - 0.15)));
+    found.sort((p, q) => barren(p) - barren(q) || q.worst - p.worst);
     parentPort.postMessage({ job, rules: found.slice(0, 6).map((f) => f.rule) });
   });
 }

@@ -23,6 +23,11 @@ pub extern "C" fn world_new() -> *mut World {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn world_free(w: *mut World) {
+    drop(unsafe { Box::from_raw(w) });
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn world_set_rule(w: *mut World, birth: u32, survive: u32) -> u32 {
     unsafe { (*w).set_rule(birth as u16, survive as u16) as u32 }
 }

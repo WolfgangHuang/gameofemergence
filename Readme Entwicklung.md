@@ -14,7 +14,7 @@ React-Oberfläche (src/App.tsx, src/ui/)
 Stage (src/stage/Stage.ts): Kamera, Eingabe, Bildschleife
         │                         │
    Web Worker                  WebGL2
-   (src/sim/worker.ts)         (src/render/renderer.ts, HatScene.ts)
+   (src/sim/worker.ts)         (src/render/renderer.ts, GraphScene.ts)
         │
 Rust/WASM-Engine (engine/src/)
 ```
@@ -151,15 +151,17 @@ npm run wasm && node scripts/pentagon-rules.mjs   # Regelvorschläge
 
 **Bestätigung:** Für die Typen 1–13 stimmt die gefundene Zahl der Fünfecke pro Periode mit der von Wikipedia überein, soweit sie sich dort einem Typ zuordnen lässt. Die Zahlen 6 und 12 für die Typen 14 und 15 konnte die Quellenprüfung nicht im Original lesen, sie entsprechen aber dem, was der Löser unabhängig findet. Die Winkel von Typ 14 ergeben sich aus den Bedingungen zu 90°, 145,34°, 69,32°, 124,66° und 110,68° und stimmen mit dem Beispiel der Quelle überein. Bei welchen Typen weitere Kachelungen existieren, wurde nicht untersucht: Gezeigt wird die erste mit der kleinsten bekannten Periode.
 
-**Nachbarn:** Viele Typen liegen nicht Kante an Kante, gleiche Ecken reichen zum Erkennen also nicht. Kante heißt hier: gemeinsames Stück positiver Länge. Ecke heißt: Berührung in einem Punkt, auch wenn dort eine Ecke auf einer fremden Kante liegt. Bei den Typen 1, 2, 3 und 12 kommt Letzteres nie allein vor, sie haben nur eine Nachbarschaft. Bei den Typen 10, 11, 13, 14 und 15 haben nicht alle Fünfecke gleich viele Nachbarn, das Panel zeigt dann einen Bereich und das Rule-Panel geht bis zum Höchstwert.
+**Nachbarn:** Viele Typen liegen nicht Kante an Kante, gleiche Ecken reichen zum Erkennen also nicht. Kante heißt hier: gemeinsames Stück positiver Länge. Ecke heißt: Berührung in einem Punkt, auch wenn dort eine Ecke auf einer fremden Kante liegt. Bei den Typen 1, 2, 3, 11, 12 und 14 kommt Letzteres nie allein vor, beide Nachbarschaften sind dort also gleich. Bei den Typen 10, 11, 13, 14 und 15 haben nicht alle Fünfecke gleich viele Nachbarn, das Panel zeigt dann einen Bereich und das Rule-Panel geht bis zum Höchstwert.
 
-**Engine:** `advance_general` kannte nur zwei Zellarten über die Parität von x + y. Hier gibt es bis zu 12 davon, darum hat `advance_classes` eine Tabelle je Rest von x und y. Eine Chunk-Grenze fällt nicht immer auf eine ganze Periode, weil 64 kein Vielfaches von 3 ist, also richtet sich der Kern nach der Lage des Chunks. Die Perioden sind Rechtecke von 1 bis 4 Spalten und 1 bis 6 Zeilen. `pentagon-tables.mjs` legt die Zellen so, dass kein Nachbar weiter als 2 Spalten und 1 Zeile entfernt ist. Das genügt Chunks und Geisterzellen ohne Änderung. Eine Zellposition bedeutet für die Simulation sonst nichts. Der Typ 4 landet dabei auf einem 2×2-Gitter mit 7 der 8 Moore-Nachbarn.
+**Engine:** `advance_general` kannte nur zwei Zellarten über die Parität von x + y. Hier gibt es bis zu 12 davon, darum hat `advance_classes` eine Tabelle je Rest von x und y. Eine Chunk-Grenze fällt nicht immer auf eine ganze Periode, weil 64 kein Vielfaches von 3 ist, also richtet sich der Kern nach der Lage des Chunks. Die Perioden sind Rechtecke von 2 bis 4 Spalten und 1 bis 6 Zeilen. `pentagon-tables.mjs` legt die Zellen so, dass kein Nachbar weiter als 2 Spalten und 1 Zeile entfernt ist. Das genügt Chunks und Geisterzellen ohne Änderung. Eine Zellposition bedeutet für die Simulation sonst nichts. Der Typ 4 landet dabei auf einem 2×2-Gitter mit 7 der 8 Moore-Nachbarn.
 
 **Torus:** Seiten müssen ein Vielfaches der Periode und gerade sein. `fitTorus` rastet sie auf den nächsten passenden Wert ein, aus 128×128 wird bei Typ 15 also 128×126. Die eingestellte Größe bleibt erhalten und gilt wieder, sobald die Kachel wechselt.
 
 **Status:** Ein Muster gilt nur als dasselbe, wenn es sich um ganze Perioden verschiebt (`keeps_shape`). Alles andere bleibt „Evolving“, auch wenn es wandert.
 
-**Regelvorschläge:** Suchlauf über Geburt mit 1 oder 2 Werten aus 2–6 und Überleben mit bis zu 3 Werten aus den ersten 6, auf einem Torus 72×72 mit 3 Startwerten. Eine Regel kommt in die Liste, wenn sie weder ausstirbt noch das Feld flutet und ihre Population in den letzten 80 von 360 Generationen in mindestens 15 verschiedenen Werten schwankt. Regeln ohne Überleben stehen hinten, weil ein Feld dort nur Rauschen zeigt. Die Vorschläge sind damit auf dem Torus lebendig, aber nicht als beste belegt. Auf der Ebene halten sie oft nicht, siehe „Bekannte Lücken“.
+**Regelvorschläge:** Suchlauf über Geburt mit 1 oder 2 Werten aus 2–6 und Überleben mit bis zu 3 Werten aus den ersten 6, je 800 Generationen auf 3 Zufallsfeldern von 72×72 auf der unbegrenzten Ebene. Eine Regel fliegt raus, wenn sie ausstirbt, die Startpopulation mehr als verfünffacht, in der zweiten Hälfte um mehr als die Hälfte zu- oder abnimmt oder ihre Population am Ende kaum noch schwankt. Regeln ohne Überleben stehen hinten. Je Nachbarschaft bleiben so 1 bis 6 Regeln, mehr als 6 behält das Skript nicht. Eine erste Suche lief auf einem Torus und ergab Regeln, die auf der Ebene explodierten oder fast ausstarben.
+
+Nachgemessen mit einem Startwert, den die Suche nicht kannte, über 2.000 Generationen: Keine Standardregel explodiert oder stirbt aus, die Population liegt beim 0,5- bis 7,7-Fachen des Starts. Mehr als das 5-Fache erreichen dabei Typ 4 und 5 mit Ecken sowie Typ 7, 8 und 15 nur über Kanten, sie wachsen also langsam weiter. Die Vorschläge sind damit lebendig, aber nicht als beste belegt.
 
 ### Penrose
 
@@ -314,6 +316,16 @@ Gemessen über 5.000 Generationen. Tempo und Richtung sind nur für 4 Läufe mit
 
 **Positivkontrolle:** `search control` fliegt Glider A durch dieselben Prüfungen. Einen 2-Zustands-Glider gibt es ja nicht, ohne Kontrolle hieße „nichts gefunden“ also gar nichts. Ein Test schickt den Flug auch durch die Bewertung bis zum Fund. Gemessen über 300 Ringe: Tempo 2,13 pro Generation, Paper 2,14. Vier von acht Starts bestehen alle Patches, die übrigen schicken zwei Glider los.
 
+**Ergebnisse bisher:** Drei Läufe über alle 32.768 Regeln mit Kanten und Ecken sind fertig, sie liegen in `results/` und damit nicht im Repository. Keiner fand einen Glider oder Traveller:
+
+| Lauf | Seeds | Oszillatoren (Einträge) | Stillleben (Einträge) | Glider, Traveller |
+|---|---|---|---|---|
+| `moore-voll` | `polyhat:3-8,corridor,soup:3-5,mutate` | 421.602 | 129.361 | 0 |
+| `moore-klein` | `polyhat:3-6,corridor,soup,mutate` | 175.292 | 117.004 | 0 |
+| `spaet` | `late:3-5,latesoup:3-4` | 90.448 | 86.751 | 0 |
+
+Durchsucht wurden dabei nur die 7.518 stabilen und chaotischen Regeln, die 24.409 explosiven nicht. Das schließt Glider nicht aus, weder bei den explosiven Regeln noch bei größeren Seeds. Nur über Kanten und auf mehreren Ringen liegen noch keine Läufe vor.
+
 **Abweichungen von der ursprünglichen Aufgabe:**
 
 | Vorgabe | Umgesetzt | Warum |
@@ -351,7 +363,7 @@ Gemessen über 5.000 Generationen. Tempo und Richtung sind nur für 4 Läufe mit
 
 ### Regelvorschläge
 
-Für die neuen Gitter stammen die Regeln aus Suchläufen über viele B/S-Kombinationen mit Zufallsfeldern, nicht aus der Literatur. Auswahlkriterium: Sie bleiben aktiv, ohne auszusterben oder das Feld zu fluten. Die Skripte dazu liegen nicht im Repository, und die Suchläufe nutzten nur je einen Startwert. Die Vorschläge sind also lebendig, aber nicht als „beste“ Regeln belegt.
+Für Dreiecke, Hexagone und den Hat stammen die Regeln aus Suchläufen über viele B/S-Kombinationen mit Zufallsfeldern, nicht aus der Literatur. Auswahlkriterium: Sie bleiben aktiv, ohne auszusterben oder das Feld zu fluten. Die Skripte dazu liegen nicht im Repository, und die Suchläufe nutzten nur je einen Startwert. Die Vorschläge sind also lebendig, aber nicht als „beste“ Regeln belegt. Fünfecke und Penrose haben eigene, strengere Skripte im Repository, siehe „Fünfecke“ und „Penrose“.
 
 Beim Hat ist B25/S3 Standard: rund 5 % Dichte und über 600 Generationen aktiv. Eine erste Wahl (B36/S234) sah zu dunkel aus, weil der Suchlauf die Dichte zunächst falsch gemessen hatte. B3/S23 endete im Test auf dem Hat in kleinen Oszillatoren.
 
@@ -379,13 +391,12 @@ Letzter Stand: alle grün.
 - **`search control`:** Nicht Teil von `npm test`. Prüft die Messung des Suchmodus am bekannten Glider, siehe „Suchmodus“.
 - **`check-share.mjs`:** Rundläufe für RLE und Links über alle Vorlagen, dazu rund 30 fehlerhafte oder böswillige Eingaben, unter anderem eine Deflate-Bombe.
 
-Die Browsertests liefen mit Playwright und liegen nicht im Repository. Der Suchmodus wurde in Headless-Chrome über das DevTools-Protokoll geprüft: Funde mit Kanten, Kanten+Ecken und 2 Ringen per Link geöffnet, Fund-Datei importiert, einen geladenen Fund erneut geteilt. Rule-Panel und Statusanzeige nennen dabei dieselbe Regel und Periode wie das CLI. Automatische Tests hat das nicht. Das gilt auch für den Torus. Er wurde in Headless-Chrome über das DevTools-Protokoll geprüft: alle Kachelfamilien, Malen über die Naht, Glider-Umlauf, B0, Wechsel zwischen den Feldern, 4096×4096. Beim Verschieben über die Naht stimmten die Bilder bis auf den Versatz pixelgenau überein. Links wurden dort ebenfalls geprüft: erzeugen, in einem frischen Tab öffnen, Bilder vergleichen. Auf Quadraten und Dreiecken war das pixelgenau, auf schrägen Hexagonen und dem Hat wichen bei gleicher Population höchstens 0,3 % der dunklen Pixel ab, vermutlich wegen der gerundeten Kameraposition. Auch der Donut wurde dort geprüft: Seitenverhältnisse, Spiegelung, Drehen, Zoomen, gesperrte Tasten, Hexagone und Dreiecke, 4096×4096. Automatische Tests hat er keine.
+Die Browsertests liefen mit Playwright und liegen nicht im Repository. Der Suchmodus wurde in Headless-Chrome über das DevTools-Protokoll geprüft: Funde mit Kanten, Kanten+Ecken und 2 Ringen per Link geöffnet, Fund-Datei importiert, einen geladenen Fund erneut geteilt. Rule-Panel und Statusanzeige nennen dabei dieselbe Regel und Periode wie das CLI. Automatische Tests hat das nicht. Das gilt auch für den Torus. Er wurde in Headless-Chrome über das DevTools-Protokoll geprüft: alle Kachelfamilien, Malen über die Naht, Glider-Umlauf, B0, Wechsel zwischen den Feldern, 4096×4096. Beim Verschieben über die Naht stimmten die Bilder bis auf den Versatz pixelgenau überein. Links wurden dort ebenfalls geprüft: erzeugen, in einem frischen Tab öffnen, Bilder vergleichen. Auf Quadraten und Dreiecken war das pixelgenau, auf schrägen Hexagonen und dem Hat wichen bei gleicher Population höchstens 0,3 % der dunklen Pixel ab, vermutlich wegen der gerundeten Kameraposition. Auch der Donut wurde dort geprüft: Seitenverhältnisse, Spiegelung, Drehen, Zoomen, gesperrte Tasten, Hexagone und Dreiecke, 4096×4096. Automatische Tests hat er keine. Von den neuen Fünfeck-Regeln liefen dort Stichproben auf Typ 4, 8 und 15 über rund 260 Generationen ohne Konsolenfehler, Penrose siehe „Penrose“.
 
 ## Bekannte Lücken
 
 - **Fünfecke, nah herangezoomt:** Eine Periode von Typ 15 enthält 12 Fünfecke auf derselben Nachschlagetextur von 512×512 Texeln, die Kanten sehen bei starker Vergrößerung deshalb treppig aus. Eine größere Textur kostet bei jedem Ziehen einer Ecke mehr, das wurde noch nicht gemessen.
 - **Fünfecke, Torus:** Die Naht verläuft bei langen, schrägen Perioden diagonal durch die Kacheln. Das betrifft wie bei den anderen schrägen Formen nur die Anzeige.
-- **Fünfecke, Regelvorschläge auf der Ebene:** Sie stammen aus einer Suche auf einem Torus 72×72 und halten auf dem unbegrenzten Feld oft nicht. Gemessen über 2.000 Generationen aus einem Zufallsfeld: Bei den Standardregeln mit Ecken (Typ 4, 6, 7, 8, 13) und nur über Kanten (Typ 8, 10, 13) wächst die Population stark oder explodiert, bei vielen anderen stirbt sie fast aus. Die Suche sollte auf der Ebene wiederholt werden, mit den Kriterien von `penrose-rules.mjs`.
 - **Fünfecke, Formen:** Pro Typ gibt es nur ein festes Beispiel, kein Muster und kein RLE. Beim Typwechsel gilt wieder die erste vorgeschlagene Regel.
 
 - **Nur im Headless-Chrome mit Software-Rendering getestet.** Eine echte GPU, Firefox, Safari und Touch-Gesten sind ungeprüft. Im Headless-Browser lag die Anzeige bei rund 17 Bildern pro Sekunde und damit etwa 300 ms hinterher. Auf echter Hardware ist das noch nicht gemessen.
@@ -412,7 +423,7 @@ Die Browsertests liefen mit Playwright und liegen nicht im Repository. Der Suchm
 ## Nächste Schritte
 
 1. **Mehr Hat-Muster und Regeln.** Glider C (ein Dreifach-Glider) aus monotile-ca lässt sich wie Glider A übernehmen. *Worms* von Trevorrow und die Regel von Gabbay nur nach Klärung der Rechte, monotile-ca nutzt sie mit deren Erlaubnis. Dazu eine Kamera, die einem Muster folgt, und die in HatLife übliche größere Nachbarschaftsreichweite (`N2`).
-2. **Suchmodus auswerten.** Der volle Lauf steht noch aus, siehe „Suchmodus“.
+2. **Suchmodus auswerten.** Die Läufe mit Kanten und Ecken sind fertig und fanden keine Glider, siehe „Suchmodus“. Offen sind die Läufe nur über Kanten, auf 2 Ringen und mit explosiven Regeln. Für den vollen Lauf fehlt außerdem noch die Auswertung der Oszillatoren mit `search unique`.
 3. **Test auf echter Hardware.** GPU, Firefox, Safari und Touch, wie unter „Bekannte Lücken“ beschrieben.
 4. **Deployment** auf den eigenen Ubuntu-Server bei Hetzner (CX22). Die Seite ist statisch, der Server muss `.wasm` als `application/wasm` ausliefern. COOP/COEP-Header werden erst nötig, falls später WASM-Threads dazukommen. Erst danach funktionieren geteilte Links auch für andere. Der Server sollte HTTPS nutzen, sonst steht das automatische Kopieren in die Zwischenablage nicht zur Verfügung.
 5. **Mögliche Erweiterungen, noch nicht entschieden:**
@@ -425,6 +436,6 @@ Die Browsertests liefen mit Playwright und liegen nicht im Repository. Der Suchm
 
 ## Organisatorisches
 
-- **Git:** Repository mit Remote `origin`. `src/sim/engine.wasm` und `engine/target` sind ausgeschlossen, der Build erzeugt sie.
+- **Git:** Repository mit Remote `origin`. `src/sim/engine.wasm` und `engine/target` sind ausgeschlossen, der Build erzeugt sie. Auch `results/` ist ausgeschlossen, Suchergebnisse liegen also nur lokal. Das Binary `search` ist dagegen eingecheckt.
 - **Nextcloud:** `node_modules` und `dist` stehen in der globalen Ausschlussliste, `target` noch nicht. Ein Eintrag dort gilt für alle Ordner dieses Namens im Sync. `engine/target` sollte also vor dem nächsten Sync ausgeschlossen oder anders gelöst werden.
 - **Lizenz:** Für das Projekt selbst noch nicht festgelegt.

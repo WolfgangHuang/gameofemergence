@@ -35,11 +35,11 @@ Das Mausrad zoomt. Verschieben geht auch mit rechter oder mittlerer Maustaste od
 
 Links und RLE findest du im Abschnitt **Share & export**. Geöffnete Links starten pausiert bei Generation 0.
 
-Den Torus und seine Größe stellst du im Abschnitt **Field** ein. Die Seiten sind gerade Zahlen von 8 bis 4096. Ebene und Torus behalten beim Wechsel jeweils ihre Zellen.
+Den Torus und seine Größe stellst du im Abschnitt **Field** ein. Die Seiten sind gerade Zahlen von 8 bis 4096. Bei Fünfecken rasten sie zusätzlich auf ein Vielfaches der Periode ein, aus 128×128 wird bei Typ 15 also 128×126. Ebene und Torus behalten beim Wechsel jeweils ihre Zellen.
 
 ## Suche nach Glidern (Kommandozeile)
 
-`search` durchsucht B/S-Regeln auf dem Hat nach Mustern, die wandern, auf derselben Engine wie die Seite. Funde lassen sich dort öffnen.
+`search` durchsucht B/S-Regeln auf dem Hat nach Mustern, die wandern, auf derselben Engine wie die Seite. Funde lassen sich dort öffnen. Die bisherigen Läufe über alle 32.768 Regeln mit Kanten und Ecken fanden Oszillatoren und Stillleben, aber keine Glider. Details stehen in der [Readme Entwicklung](Readme%20Entwicklung.md).
 
 ```
 npm run search:build
@@ -115,6 +115,6 @@ Der Browser muss WebGL2 unterstützen.
 
 ## Lizenz und Danksagung
 
-Die Substitutionsregeln der Hat-Kachelung stammen aus [hatviz](https://github.com/isohedral/hatviz) von Craig S. Kaplan (BSD 3-Clause), siehe [public/THIRD_PARTY_NOTICES.txt](public/THIRD_PARTY_NOTICES.txt). Die Kachelung selbst beschreiben Smith, Myers, Kaplan und Goodman-Strauss in „An aperiodic monotile“ (2023). Der Hat-Glider stammt von James Edmond ([monotile-ca](https://github.com/jamesedmond/monotile-ca), MIT-Lizenz).
+Die Substitutionsregeln der Hat-Kachelung stammen aus [hatviz](https://github.com/isohedral/hatviz) von Craig S. Kaplan (BSD 3-Clause), siehe [public/THIRD_PARTY_NOTICES.txt](public/THIRD_PARTY_NOTICES.txt). Die Kachelung selbst beschreiben Smith, Myers, Kaplan und Goodman-Strauss in „An aperiodic monotile“ (2023). Der Hat-Glider stammt von James Edmond ([monotile-ca](https://github.com/jamesedmond/monotile-ca), MIT-Lizenz). Die Rauten gehen auf Roger Penrose zurück und entstehen hier durch die Teilung von Robinson-Dreiecken. Die Bedingungen der 15 Fünfeck-Typen stammen aus der Wikipedia, die Kachelungen selbst berechnet ein Skript im Repository.
 
 Für das Projekt selbst ist noch keine Lizenz festgelegt.
