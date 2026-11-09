@@ -6,9 +6,10 @@ import type { Pattern } from './patterns/library';
 import { flip, rotate, type Shape } from './patterns/rle';
 import type { Stats, TorusSize } from './sim/protocol';
 import { Stage, type Tool } from './stage/Stage';
-import { BrushIcon, ChevronIcon, ClearIcon, EraserIcon, HandIcon, MoonIcon, PauseIcon, PlayIcon, SeedIcon, StampIcon, StepIcon, SunIcon } from './ui/icons';
+import { BrushIcon, ChevronIcon, ClearIcon, EraserIcon, HandIcon, InfoIcon, MoonIcon, PauseIcon, PlayIcon, SeedIcon, StampIcon, StepIcon, SunIcon } from './ui/icons';
 import { useTheme } from './ui/theme';
 import { HAT_PATTERNS, type HatPattern } from './patterns/hatPatterns';
+import { InfoDialog } from './ui/InfoDialog';
 import { HatPatternPanel, PatternPanel } from './ui/PatternPanel';
 import { RulePanel } from './ui/RulePanel';
 import { RangeRulePanel } from './ui/RangeRulePanel';
@@ -101,6 +102,7 @@ export function App() {
   const stageRef = useRef<Stage | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [theme, toggleTheme] = useTheme();
+  const [infoOpen, setInfoOpen] = useState(false);
   /** The link this page was opened with, read once. Pasting another one reloads the page. */
   const [shared] = useState(() => parseLink(window.location.hash));
   const [linkProblems, setLinkProblems] = useState(shared?.problems ?? []);
@@ -270,6 +272,8 @@ export function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Nothing may change behind an open dialog, and Esc is for closing it.
+      if (document.querySelector('dialog[open]')) return;
       if (e.ctrlKey || e.metaKey || e.altKey || (e.target instanceof HTMLButtonElement && e.key === ' ')) return;
       if (e.target instanceof Element && e.target.matches('textarea, input[type=number], input[type=text]')) return;
       const stage = stageRef.current;
@@ -432,6 +436,9 @@ export function App() {
           >
             {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
           </button>
+          <button className="view-toggle" aria-label="About" aria-haspopup="dialog" title="About" onMouseDown={(e) => e.preventDefault()} onClick={() => setInfoOpen(true)}>
+            <InfoIcon />
+          </button>
         </div>
 
         {!donut && (
@@ -555,6 +562,9 @@ export function App() {
 
         <p className={empty && tool !== 'stamp' && !donut ? 'hint' : 'hint gone'}>Draw on the field, press S for a random start, or pick a pattern.</p>
       </div>
+
+      {/* Outside the chrome, which fades while the simulation runs. */}
+      {infoOpen && <InfoDialog onClose={() => setInfoOpen(false)} />}
     </>
   );
 }

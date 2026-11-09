@@ -64,6 +64,12 @@ export const MoonIcon = () => (
     <path d="M19 14.5A7.5 7.5 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5z" />
   </Icon>
 );
+export const InfoIcon = () => (
+  <Icon>
+    <circle cx="12" cy="12" r="8" />
+    <path d="M12 11v5M12 8h.01" />
+  </Icon>
+);
 export const ClearIcon = () => (
   <Icon>
     <path d="m7 7 10 10M17 7 7 17" />
