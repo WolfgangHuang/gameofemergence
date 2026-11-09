@@ -9,6 +9,7 @@
 //!
 //! A world can also be a torus of fixed size, see `Torus`.
 
+use crate::pentagons::TABLES;
 use crate::status::Detector;
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
@@ -20,6 +21,8 @@ const EMPTY: [u64; SIZE] = [0; SIZE];
 const GC_INTERVAL: u64 = 64;
 const MIN_TORUS: i32 = 8;
 const MAX_TORUS: i32 = 8192;
+/// Longest period along x that `Classes` may have.
+const MAX_PERIOD: usize = 16;
 
 /// Link order: N, S, W, E, NW, NE, SW, SE.
 const OFFSETS: [(i32, i32); 8] = [
@@ -40,6 +43,22 @@ pub struct Neighbourhood {
     odd: &'static [(i32, i32)],
 }
 
+/// Offsets for tilings whose cells come in more kinds than x + y can tell apart.
+/// The kind of a cell only depends on x modulo `width` and y modulo `height`, and
+/// `cells` holds one list per kind, row by row. Offsets stay within two columns and
+/// one row, the most that chunks and ghost cells provide for.
+pub struct Classes {
+    pub width: i32,
+    pub height: i32,
+    pub cells: &'static [&'static [(i32, i32)]],
+}
+
+impl Classes {
+    pub fn offsets_at(&self, x: i32, y: i32) -> &'static [(i32, i32)] {
+        self.cells[(y.rem_euclid(self.height) * self.width + x.rem_euclid(self.width)) as usize]
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Topology {
     Moore,
@@ -47,8 +66,11 @@ pub enum Topology {
     Hexagonal,
     TriangleEdges,
     TriangleVertices,
+    /// Index into `pentagons::TABLES`.
+    Pentagon(u8),
 }
 
+const NOTHING: &[(i32, i32)] = &[];
 const VON_NEUMANN: &[(i32, i32)] = &[(-1, 0), (1, 0), (0, -1), (0, 1)];
 const HEXAGONAL: &[(i32, i32)] = &[(-1, 0), (1, 0), (0, -1), (0, 1), (1, -1), (-1, 1)];
 const TRIANGLE_EDGES_EVEN: &[(i32, i32)] = &[(-1, 0), (1, 0), (0, -1)];
@@ -75,8 +97,40 @@ impl Topology {
             2 => Topology::Hexagonal,
             3 => Topology::TriangleEdges,
             4 => Topology::TriangleVertices,
+            n if ((n - 5) as usize) < TABLES.len() => Topology::Pentagon((n - 5) as u8),
             _ => return None,
         })
+    }
+
+    /// The number `from_index` takes, for tests that count per topology.
+    #[cfg(test)]
+    pub fn index(self) -> usize {
+        match self {
+            Topology::Moore => 0,
+            Topology::VonNeumann => 1,
+            Topology::Hexagonal => 2,
+            Topology::TriangleEdges => 3,
+            Topology::TriangleVertices => 4,
+            Topology::Pentagon(i) => 5 + i as usize,
+        }
+    }
+
+    pub fn classes(self) -> Option<&'static Classes> {
+        match self {
+            Topology::Pentagon(i) => Some(&TABLES[i as usize]),
+            _ => None,
+        }
+    }
+
+    /// Neighbour offsets of the cell at this position.
+    pub fn offsets_at(self, x: i32, y: i32) -> &'static [(i32, i32)] {
+        match self.classes() {
+            Some(classes) => classes.offsets_at(x, y),
+            None => {
+                let n = self.neighbourhood();
+                if (x + y).rem_euclid(2) == 0 { n.even } else { n.odd }
+            }
+        }
     }
 
     pub fn neighbourhood(self) -> Neighbourhood {
@@ -86,19 +140,36 @@ impl Topology {
             Topology::Hexagonal => (HEXAGONAL, HEXAGONAL),
             Topology::TriangleEdges => (TRIANGLE_EDGES_EVEN, TRIANGLE_EDGES_ODD),
             Topology::TriangleVertices => (TRIANGLE_VERTICES_EVEN, TRIANGLE_VERTICES_ODD),
+            // These go through `classes` instead.
+            Topology::Pentagon(_) => (NOTHING, NOTHING),
         };
         Neighbourhood { even, odd }
     }
 
     /// Largest distance on either axis at which a cell has a neighbour.
     pub fn range(self) -> i32 {
-        if self == Topology::TriangleVertices { 2 } else { 1 }
+        match self {
+            Topology::TriangleVertices => 2,
+            Topology::Pentagon(i) => {
+                let cells = TABLES[i as usize].cells.iter().copied().flatten();
+                cells.map(|&(dx, dy)| dx.abs().max(dy.abs())).max().unwrap_or(1)
+            }
+            _ => 1,
+        }
     }
 
-    /// On the triangular grid, an odd translation turns a triangle upside down,
-    /// so a shape shifted that way is not the same object.
-    pub fn parity_matters(self) -> bool {
-        matches!(self, Topology::TriangleEdges | Topology::TriangleVertices)
+    /// Whether a shape moved by this much is still the same object. On a triangular
+    /// grid, an odd move turns a triangle upside down, and among pentagons only whole
+    /// periods keep the kinds of all cells.
+    pub fn keeps_shape(self, dx: i32, dy: i32) -> bool {
+        match self {
+            Topology::TriangleEdges | Topology::TriangleVertices => (dx + dy).rem_euclid(2) == 0,
+            Topology::Pentagon(i) => {
+                let classes = &TABLES[i as usize];
+                dx.rem_euclid(classes.width) == 0 && dy.rem_euclid(classes.height) == 0
+            }
+            _ => true,
+        }
     }
 }
 
@@ -477,6 +548,8 @@ impl World {
             let mut next = EMPTY;
             let (changed, pop) = if topology == Topology::Moore {
                 advance(c.rows(), &around, birth, survive, &mut next)
+            } else if let Some(classes) = topology.classes() {
+                advance_classes(c.rows(), &around, c.key, classes, birth, survive, &mut next)
             } else {
                 advance_general(c.rows(), &around, &neighbourhood, birth, survive, &mut next)
             };
@@ -924,6 +997,79 @@ fn advance_general(
     (changed, pop)
 }
 
+/// Like `advance_general`, for cells of many kinds. A chunk does not have to start
+/// on a whole period, because 64 is no multiple of 3.
+fn advance_classes(
+    me: &[u64; SIZE],
+    around: &[&[u64; SIZE]; 8],
+    key: (i32, i32),
+    classes: &Classes,
+    birth: u16,
+    survive: u16,
+    out: &mut [u64; SIZE],
+) -> (bool, u32) {
+    let [north, south, west, east, nw, ne, sw, se] = *around;
+    let (width, height) = (classes.width as usize, classes.height as usize);
+    let first_x = (key.0 as i64 * SIZE as i64).rem_euclid(width as i64) as usize;
+    let first_y = (key.1 as i64 * SIZE as i64).rem_euclid(height as i64) as usize;
+    // The bits of a row belonging to each column of the period.
+    let mut columns = [0u64; MAX_PERIOD];
+    for bit in 0..SIZE {
+        columns[(first_x + bit) % width] |= 1u64 << bit;
+    }
+    let mut changed = false;
+    let mut pop = 0;
+
+    for y in 0..SIZE {
+        let row = |dy: i32| -> (u64, u64, u64) {
+            match y as i32 + dy {
+                -1 => (north[SIZE - 1], nw[SIZE - 1], ne[SIZE - 1]),
+                r if r == SIZE as i32 => (south[0], sw[0], se[0]),
+                r => (me[r as usize], west[r as usize], east[r as usize]),
+            }
+        };
+        let kinds = &classes.cells[(first_y + y) % height * width..][..width];
+        let (mut c0, mut c1, mut c2, mut c3) = (0u64, 0u64, 0u64, 0u64);
+        for (offsets, &mask) in kinds.iter().zip(&columns) {
+            for &(dx, dy) in *offsets {
+                let (word, left, right) = row(dy);
+                let mut carry = shifted(word, left, right, dx) & mask;
+                let next = c0 & carry;
+                c0 ^= carry;
+                carry = next;
+                let next = c1 & carry;
+                c1 ^= carry;
+                carry = next;
+                let next = c2 & carry;
+                c2 ^= carry;
+                carry = next;
+                c3 ^= carry;
+            }
+        }
+
+        let mut born = 0;
+        let mut stay = 0;
+        for k in 0..16 {
+            if (birth | survive) >> k & 1 == 1 {
+                let equal = count_equals(k, c0, c1, c2, c3);
+                if birth >> k & 1 == 1 {
+                    born |= equal;
+                }
+                if survive >> k & 1 == 1 {
+                    stay |= equal;
+                }
+            }
+        }
+
+        let b = me[y];
+        let next = (b & stay) | (!b & born);
+        out[y] = next;
+        changed |= next != b;
+        pop += next.count_ones();
+    }
+    (changed, pop)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -982,14 +1128,12 @@ mod tests {
     }
 
     fn naive_general(cells: &Cells, topology: Topology, birth: u16, survive: u16) -> Cells {
-        let n = topology.neighbourhood();
         let mut counts: HashMap<(i32, i32), u32> = HashMap::new();
         for &(x, y) in cells {
             // Neighbourhoods are symmetric, so a cell's neighbours are also
             // exactly the cells that count it.
             counts.entry((x, y)).or_default();
-            let offsets = if (x + y).rem_euclid(2) == 0 { n.even } else { n.odd };
-            for &(dx, dy) in offsets {
+            for &(dx, dy) in topology.offsets_at(x, y) {
                 *counts.entry((x + dx, y + dy)).or_default() += 1;
             }
         }
@@ -1028,6 +1172,65 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn pentagon_topologies() -> impl Iterator<Item = Topology> {
+        (0..TABLES.len()).map(|i| Topology::Pentagon(i as u8))
+    }
+
+    #[test]
+    fn pentagon_tables_are_complete_and_symmetric() {
+        for topology in pentagon_topologies() {
+            let classes = topology.classes().unwrap();
+            assert_eq!(classes.cells.len() as i32, classes.width * classes.height);
+            assert!(classes.width as usize <= MAX_PERIOD);
+            for y in 0..classes.height {
+                for x in 0..classes.width {
+                    let offsets = classes.offsets_at(x, y);
+                    assert!(offsets.len() <= 15, "{topology:?}");
+                    for &(dx, dy) in offsets {
+                        assert!(dx.abs() <= 2 && dy.abs() <= 1, "{topology:?} {dx},{dy}");
+                        assert!((dx, dy) != (0, 0), "{topology:?}");
+                        assert!(classes.offsets_at(x + dx, y + dy).contains(&(-dx, -dy)), "{topology:?} at {x},{y}: {dx},{dy}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pentagon_kernel_matches_naive() {
+        for (i, topology) in pentagon_topologies().enumerate() {
+            let mut w = World::new();
+            w.set_topology(topology);
+            assert!(w.set_rule(1 << 2 | 1 << 5, 1 << 2 | 1 << 3 | 1 << 4));
+            w.soup(-90, -70, 180, 140, 0.3, 500 + i as u32);
+            let mut reference = cells_of(&w);
+            for generation in 0..25 {
+                w.step();
+                reference = naive_general(&reference, topology, 1 << 2 | 1 << 5, 1 << 2 | 1 << 3 | 1 << 4);
+                assert_eq!(cells_of(&w), reference, "{topology:?} diverged at step {generation}");
+            }
+        }
+    }
+
+    #[test]
+    fn pentagon_torus_matches_naive() {
+        // Multiples of every period, also across chunks that do not start on one.
+        let sizes = [(12, 12), (24, 36), (72, 132), (132, 72)];
+        for topology in pentagon_topologies() {
+            compare_torus_sizes(&sizes, 15, topology, 1 << 2 | 1 << 5, 1 << 2 | 1 << 3 | 1 << 4, 0.3);
+        }
+    }
+
+    #[test]
+    fn only_whole_periods_keep_a_pentagon_shape() {
+        let classes = Topology::Pentagon(0).classes().unwrap();
+        assert!(Topology::Pentagon(0).keeps_shape(classes.width, 0));
+        assert!(Topology::Pentagon(0).keeps_shape(-classes.width, classes.height));
+        assert!(!Topology::Pentagon(0).keeps_shape(1, 0));
+        assert!(Topology::Moore.keeps_shape(1, 0));
+        assert!(!Topology::TriangleEdges.keeps_shape(1, 0));
     }
 
     #[test]
@@ -1118,12 +1321,11 @@ mod tests {
 
     /// Dense on purpose, so that it shares nothing with the engine and also covers B0.
     fn naive_torus(cells: &Cells, w: i32, h: i32, topology: Topology, birth: u16, survive: u16) -> Cells {
-        let n = topology.neighbourhood();
         let mut next = Cells::new();
         for y in 0..h {
             for x in 0..w {
-                let offsets = if (x + y) % 2 == 0 { n.even } else { n.odd };
-                let count = offsets
+                let count = topology
+                    .offsets_at(x, y)
                     .iter()
                     .filter(|(dx, dy)| cells.contains(&((x + dx).rem_euclid(w), (y + dy).rem_euclid(h))))
                     .count();
@@ -1153,7 +1355,11 @@ mod tests {
     }
 
     fn compare_torus(topology: Topology, birth: u16, survive: u16, density: f64) {
-        for (width, height) in TORUS_SIZES {
+        compare_torus_sizes(&TORUS_SIZES, 40, topology, birth, survive, density);
+    }
+
+    fn compare_torus_sizes(sizes: &[(i32, i32)], steps: u32, topology: Topology, birth: u16, survive: u16, density: f64) {
+        for &(width, height) in sizes {
             let mut w = World::new();
             assert!(w.set_torus(width, height));
             w.set_topology(topology);
@@ -1161,7 +1367,7 @@ mod tests {
             w.soup(0, 0, width, height, density, 2023 + width as u32);
             let mut reference = torus_cells(&w);
             assert!(!reference.is_empty());
-            for generation in 0..40 {
+            for generation in 0..steps {
                 w.step();
                 reference = naive_torus(&reference, width, height, topology, birth, survive);
                 let cells = torus_cells(&w);

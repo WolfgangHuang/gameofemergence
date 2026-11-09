@@ -16,7 +16,7 @@ import { RlePanel } from './ui/RlePanel';
 import { SharePanel } from './ui/SharePanel';
 import { TilePanel, type TileState } from './ui/TilePanel';
 import { DEFAULT_TORUS, TorusPanel } from './ui/TorusPanel';
-import { buildTiling, FAMILIES, HAT_NEIGHBOURHOODS, HAT_SHAPES, TOPOLOGY } from './tiles/tiles';
+import { buildTiling, FAMILIES, fitTorus, HAT_NEIGHBOURHOODS, HAT_SHAPES, neighbourhoodsOf, TOPOLOGY, torusPeriod } from './tiles/tiles';
 
 const IDLE_MS = 2500;
 const SPEED_MAX = 30;
@@ -113,12 +113,14 @@ export function App() {
   /** Both survive a visit to the hat tiling, which cannot be a torus. */
   const [torusOn, setTorusOn] = useState(shared?.torus != null);
   const [torusSize, setTorusSize] = useState<TorusSize>(shared?.torus ?? DEFAULT_TORUS);
-  const torus = useMemo(() => (torusOn && !isHat ? torusSize : null), [torusOn, isHat, torusSize]);
+  /** Pentagons repeat after a few cells, which the sides of a torus have to respect. */
+  const [periodX, periodY] = tile.family === 'hat' ? [2, 2] : torusPeriod(tile.family, tile.preset);
+  const torus = useMemo(() => (torusOn && !isHat ? fitTorus(torusSize, [periodX, periodY]) : null), [torusOn, isHat, torusSize, periodX, periodY]);
   const onTorus = torus !== null;
   /** The torus as a ring in space. It only shows the field, drawing happens in the flat view. */
   const [donutOn, setDonutOn] = useState(false);
   const donut = donutOn && onTorus;
-  const neighbourhood = tile.family === 'hat' ? HAT_NEIGHBOURHOODS[tile.neighbourhood] : FAMILIES[tile.family].neighbourhoods[tile.neighbourhood];
+  const neighbourhood = tile.family === 'hat' ? HAT_NEIGHBOURHOODS[tile.neighbourhood] : neighbourhoodsOf(tile.family, tile.preset)[tile.neighbourhood];
   const [rule, setRule] = useState<Rule>(shared?.rule ?? parseRule(neighbourhood.rules[0]));
   /** A pattern's own priority table, which replaces the rule while it is set. */
   const [table, setTable] = useState<number[] | null>(HAT_PATTERNS.find((p) => p.id === shared?.table)?.table ?? null);
@@ -487,7 +489,7 @@ export function App() {
             )}
           </PanelSection>
           <PanelSection title="Field" readout={torus ? `${torus.width} \u00d7 ${torus.height}` : isHat ? undefined : 'Unbounded'} open={open === 'field'} onToggle={() => toggleSection('field')}>
-            {isHat ? <p className="note">This tiling never repeats, so its edges cannot be joined into a torus.</p> : <TorusPanel on={torusOn} size={torusSize} onToggle={setTorusOn} onResize={setTorusSize} />}
+            {isHat ? <p className="note">This tiling never repeats, so its edges cannot be joined into a torus.</p> : <TorusPanel on={torusOn} size={torus ?? torusSize} period={[periodX, periodY]} onToggle={setTorusOn} onResize={setTorusSize} />}
             <Slider label="Brush" min={1} max={12} value={brushSize} readout={String(brushSize)} onChange={setBrushSize} />
             <Slider label="Afterglow" min={0} max={40} value={fade} readout={fade === 0 ? 'off' : `${fadeSeconds.toFixed(1)} s`} onChange={setFade} />
             <Slider label="Random density" min={5} max={95} value={density} readout={`${density} %`} onChange={setDensity} />

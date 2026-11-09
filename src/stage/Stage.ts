@@ -432,7 +432,8 @@ export class Stage {
     }
     const view = this.visibleCells();
     // Overscan keeps the picture filled while panning ahead of the next frame.
-    const margin = Math.max(view.width, view.height) / 8;
+    // At least a few cells, because a pentagon can lie beside its grid position.
+    const margin = Math.max(Math.max(view.width, view.height) / 8, 4);
     const fullWidth = view.width + 2 * margin;
     const fullHeight = view.height + 2 * margin;
     // A slanted tile needs a bounding box larger than the screen, so the level

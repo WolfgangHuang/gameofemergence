@@ -4,6 +4,7 @@
 pub mod hat;
 pub mod hat_world;
 pub mod life;
+pub mod pentagons;
 pub mod search;
 pub mod status;
 

@@ -27,8 +27,8 @@ void main() {
 
 const LOOKUP_SIZE = 512;
 const FIELD_OF_VIEW = 40;
-const MAX_VERTICES = 24;
-const MAX_POLYGONS = 4;
+const MAX_VERTICES = 60;
+const MAX_POLYGONS = 12;
 
 /**
  * Renders one lattice period into a lookup texture: for each texel, the grid

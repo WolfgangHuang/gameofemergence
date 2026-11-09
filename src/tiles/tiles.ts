@@ -5,12 +5,40 @@
  * alone, which is why it works while the simulation is running.
  */
 
+import pentagonData from './pentagons.json' with { type: 'json' };
+
 export type Vec = [number, number];
-export type Family = 'quad' | 'triangle' | 'hexagon';
+export type Family = 'quad' | 'triangle' | 'hexagon' | 'pentagon';
+
+interface PentagonTiling {
+  type: number;
+  /** Corners A to E as in the literature, for checking the type's conditions. */
+  pentagon: Vec[];
+  t1: Vec;
+  t2: Vec;
+  g1: Vec;
+  g2: Vec;
+  /** Columns and rows after which the kinds of cells repeat. */
+  period: Vec;
+  polygons: { cell: Vec; vertices: Vec[] }[];
+  /** Per polygon: dx, dy, and 2 for a shared stretch of edge or 1 for a point. */
+  neighbours: [number, number, number][][];
+  rules?: { all: string[]; edges: string[] };
+}
+
+/** Generated, see scripts/pentagon-tilings.mjs and pentagon-tables.mjs. */
+export const PENTAGONS = pentagonData as unknown as PentagonTiling[];
 
 /** Numbers as understood by the engine's `world_set_topology`. */
-export const TOPOLOGY = { moore: 0, vonNeumann: 1, hexagonal: 2, triangleEdges: 3, triangleVertices: 4 } as const;
-export type Topology = keyof typeof TOPOLOGY;
+export const TOPOLOGY: Record<string, number> = {
+  moore: 0,
+  vonNeumann: 1,
+  hexagonal: 2,
+  triangleEdges: 3,
+  triangleVertices: 4,
+  ...Object.fromEntries(PENTAGONS.flatMap((p, i) => [[`pentagon${p.type}All`, 5 + 2 * i], [`pentagon${p.type}Edges`, 6 + 2 * i]])),
+};
+export type Topology = string;
 
 export interface Polygon {
   /** Grid cell of this polygon, relative to the lattice point it hangs from. */
@@ -105,8 +133,16 @@ function hexagonTiling(half: Vec[]): Pick<Tiling, 'polygons' | 't1' | 't2' | 'g1
   return { polygons: [{ cell: [0, 0], vertices }], t1: add(p, q), t2: add(q, r), g1: [1, 0], g2: [0, 1] };
 }
 
+/** The pentagon's tiling comes as a whole, found by a search rather than a formula. */
+function pentagonTiling(outline: Vec[]): Pick<Tiling, 'polygons' | 't1' | 't2' | 'g1' | 'g2'> {
+  const found = PENTAGONS.find((p) => p.polygons[0].vertices === outline || p.polygons[0].vertices.every((v, i) => v[0] === outline[i]?.[0] && v[1] === outline[i]?.[1]));
+  if (!found) throw new Error('not one of the pentagons');
+  return found;
+}
+
 export function buildTiling(family: Family, outline: Vec[]): Tiling {
-  const raw = family === 'quad' ? quadTiling(outline) : family === 'triangle' ? triangleTiling(outline) : hexagonTiling(outline);
+  const raw =
+    family === 'quad' ? quadTiling(outline) : family === 'triangle' ? triangleTiling(outline) : family === 'hexagon' ? hexagonTiling(outline) : pentagonTiling(outline);
   // Scaled to unit area, so that deforming a tile keeps the size of the picture.
   const k = 1 / Math.sqrt(Math.abs(area(raw.polygons[0].vertices)));
   const polygons = raw.polygons.map(({ cell, vertices }) => ({ cell, vertices: vertices.map((v) => scale(v, k)) }));
@@ -216,12 +252,20 @@ export function cellPolygon(tiling: Tiling, x: number, y: number): Vec[] {
 export interface Preset {
   name: string;
   outline: Vec[];
+  /** Where a tile has neighbours of its own, unlike the rest of its family. */
+  neighbourhoods?: Neighbourhood[];
+  /** Columns and rows after which the kinds of cells repeat. */
+  period?: Vec;
+  note?: string;
 }
 
 export interface Neighbourhood {
   name: string;
   topology: Topology;
+  /** The most neighbours any cell has. */
   count: number;
+  /** The fewest, where cells differ. */
+  fewest?: number;
   /** Rules with sustained activity, the first being the default. */
   rules: string[];
 }
@@ -231,6 +275,42 @@ export interface FamilyInfo {
   /** The outline's vertices that can be dragged; the rest follow by symmetry. */
   presets: Preset[];
   neighbourhoods: Neighbourhood[];
+  /** The tiles cannot be deformed. */
+  fixed?: boolean;
+}
+
+/** Where each type comes from, after Wikipedia's "Pentagonal tiling". */
+const PENTAGON_ORIGIN = (type: number) => {
+  if (type <= 5) return 'Reinhardt, 1918';
+  if (type <= 8) return 'Kershner, 1968';
+  if (type === 10) return 'James, 1975';
+  if (type <= 13) return 'Rice, 1976\u201377';
+  return type === 14 ? 'Stein, 1985' : 'Mann, McLoud and Von Derau, 2015';
+};
+
+function pentagonPreset(p: PentagonTiling): Preset {
+  const counts = (edgesOnly: boolean) => p.neighbours.map((list) => list.filter((n) => !edgesOnly || n[2] === 2).length);
+  const all = counts(false);
+  const edges = counts(true);
+  const entry = (name: string, topology: string, list: number[], rules?: string[]): Neighbourhood => ({
+    name,
+    topology,
+    count: Math.max(...list),
+    ...(Math.min(...list) !== Math.max(...list) ? { fewest: Math.min(...list) } : {}),
+    rules: rules?.length ? rules : ['B3/S23'],
+  });
+  // Where tiles never meet in just a point, there is only one neighbourhood.
+  const onlyEdges = all.every((n, i) => n === edges[i]);
+  const neighbourhoods = onlyEdges
+    ? [entry('Edges', `pentagon${p.type}All`, all, p.rules?.all)]
+    : [entry('Edges and corners', `pentagon${p.type}All`, all, p.rules?.all), entry('Edges only', `pentagon${p.type}Edges`, edges, p.rules?.edges)];
+  return {
+    name: `Type ${p.type}`,
+    outline: p.polygons[0].vertices,
+    neighbourhoods,
+    period: p.period,
+    note: `${PENTAGON_ORIGIN(p.type)}. ${p.polygons.length} tiles per period. Each type allows many shapes, this is one of them.`,
+  };
 }
 
 const hexagon = (scaleX = 1, scaleY = 1, shear = 0): Vec[] =>
@@ -281,7 +361,38 @@ export const FAMILIES: Record<Family, FamilyInfo> = {
     ],
     neighbourhoods: [{ name: 'Edges', topology: 'hexagonal', count: 6, rules: ['B24/S3', 'B2/S34', 'B25/S34', 'B24/S35', 'B35/S123'] }],
   },
+  pentagon: {
+    name: 'Pentagon',
+    presets: PENTAGONS.map(pentagonPreset),
+    // Each type brings its own, see `neighbourhoodsOf`.
+    neighbourhoods: [],
+    fixed: true,
+  },
 };
+
+export function neighbourhoodsOf(family: Family, presetName: string | null): Neighbourhood[] {
+  const info = FAMILIES[family];
+  const preset = info.presets.find((p) => p.name === presetName) ?? info.presets[0];
+  return preset.neighbourhoods ?? info.neighbourhoods;
+}
+
+/** A neighbour count for the panels, as a range where cells differ. */
+export const countLabel = (n: Neighbourhood) => (n.fewest === undefined ? `${n.count}` : `${n.fewest}\u2013${n.count}`);
+
+export function torusPeriod(family: Family, presetName: string | null): Vec {
+  return FAMILIES[family].presets.find((p) => p.name === presetName)?.period ?? [2, 2];
+}
+
+/** The nearest side that is even and lets a period of this many cells fit. */
+function fitSide(side: number, period: number) {
+  const step = period % 2 === 0 ? period : 2 * period;
+  const within = Math.floor(MAX_TORUS_SIDE / step) * step;
+  return Math.min(within, Math.max(Math.ceil(MIN_TORUS_SIDE / step) * step, Math.round(side / step) * step));
+}
+
+export function fitTorus(size: { width: number; height: number }, period: Vec) {
+  return { width: fitSide(size.width, period[0]), height: fitSide(size.height, period[1]) };
+}
 
 export type HatTopology = 'hatVertices' | 'hatEdges';
 

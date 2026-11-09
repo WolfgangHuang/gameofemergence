@@ -1,14 +1,14 @@
 # Game of Emergence
 
-Conways „Game of Life“ im Browser, auf einem unbegrenzten Feld und auf vielen Kachelformen: von verformbaren Vierecken über Dreiecke und Hexagone bis zum aperiodischen „Hat“, einer der Einstein-Kacheln. Die Oberfläche ist weiß und minimalistisch, die Berechnung läuft in Rust/WebAssembly.
+Conways „Game of Life“ im Browser, auf einem unbegrenzten Feld und auf vielen Kachelformen: von verformbaren Vierecken über Dreiecke, Hexagone und alle 15 bekannten Fünfeck-Typen bis zum aperiodischen „Hat“, einer der Einstein-Kacheln. Die Oberfläche ist weiß und minimalistisch, die Berechnung läuft in Rust/WebAssembly.
 
 ## Features
 
 - **Unbegrenztes Feld:** Es wird nur gespeichert und berechnet, wo etwas passiert. Rund 3 Milliarden Zellen pro Sekunde auf Quadraten.
 - **Torus:** Wahlweise ein Feld fester Größe, dessen Ränder sich berühren. Was hinausläuft, kommt von der anderen Seite zurück. Das gibt es für alle Kachelformen außer den Einstein-Kacheln, die sich nicht wiederholen.
 - **3D-Donut:** Der Torus lässt sich als drehbarer Ring betrachten, auch während die Simulation läuft. Gemalt und eingestellt wird in der flachen Ansicht.
-- **Kachelformen:** Vierecke (Quadrat, Rechteck, Parallelogramm, Raute, Trapez, Drachen, Dart), Dreiecke, Hexagone und Einstein-Kacheln.
-- **Live verformbar:** Die Ecken einer Kachel lassen sich ziehen, auch während die Simulation läuft. Die Einstein-Kacheln morphen stufenlos zwischen Comet, Turtle, Spectre-Form, Hat und Chevron.
+- **Kachelformen:** Vierecke (Quadrat, Rechteck, Parallelogramm, Raute, Trapez, Drachen, Dart), Dreiecke, Hexagone, die 15 bekannten Typen konvexer Fünfecke und Einstein-Kacheln.
+- **Live verformbar:** Die Ecken einer Kachel lassen sich ziehen, auch während die Simulation läuft. Das gilt nicht für die Fünfecke, sie sind feste Beispiele ihres Typs. Die Einstein-Kacheln morphen stufenlos zwischen Comet, Turtle, Spectre-Form, Hat und Chevron.
 - **Regeln frei einstellbar:** Geburt und Überleben pro Nachbarzahl, dazu passende Vorlagen je Kachelform. Die Nachbarschaft ist wählbar, also nur über Kanten oder auch über Ecken. Auf dem Torus ist auch Geburt bei 0 Nachbarn möglich.
 - **Zeichnen:** Pinsel in 12 Größen, Radierer, Zufallsfeld mit einstellbarer Dichte.
 - **Musterbibliothek:** 24 bekannte Muster, darunter Glider, Spaceships, Gosper Gun und Acorn, mit Vorschau am Mauszeiger. Sie gilt für Vierecke mit 8 Nachbarn. Dazu kommt ein Glider für die Hat-Kachelung, der eine erweiterte 4-Zustands-Regel mitbringt. Solange sie aktiv ist, erklärt das Rule-Panel sie Zeile für Zeile und blendet die B/S-Regler aus; ein Knopf führt zurück zur Grundregel.

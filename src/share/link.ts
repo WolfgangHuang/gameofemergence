@@ -13,7 +13,7 @@ import { parseRle, RleError, toRle } from '../patterns/rle.ts';
 import { parseRangeRule, parseRule, rangeRuleName, ruleName, type RangeRule, type Rule } from '../patterns/rule.ts';
 import { HAT_PATTERNS } from '../patterns/hatPatterns.ts';
 import type { TorusSize } from '../sim/protocol.ts';
-import { FAMILIES, fullOutline, HAT_NEIGHBOURHOODS, isValidOutline, isValidTorusSide, type Family, type Vec } from '../tiles/tiles.ts';
+import { FAMILIES, fullOutline, HAT_NEIGHBOURHOODS, isValidOutline, isValidTorusSide, neighbourhoodsOf, type Family, type Vec } from '../tiles/tiles.ts';
 
 const VERSION = '1';
 /** Browsers take far more, but nothing sensible can be done with such a link. */
@@ -217,8 +217,12 @@ function parseTile(params: Map<string, string>, problems: string[]): SharedTile 
   }
   const family = name as Family;
   const info = FAMILIES[family];
+  // Pentagons have neighbourhoods per type, so this needs the preset first.
+  const preset = info.presets.find((p) => p.name === params.get('p'));
+  if (params.has('p') && !preset) problems.push('tile preset');
+  const chosen = preset ?? info.presets[0];
   const neighbourhood = Number(params.get('n') ?? 0);
-  const validN = Number.isInteger(neighbourhood) && neighbourhood >= 0 && neighbourhood < info.neighbourhoods.length;
+  const validN = Number.isInteger(neighbourhood) && neighbourhood >= 0 && neighbourhood < neighbourhoodsOf(family, chosen.name).length;
   if (!validN) problems.push('neighbourhood');
   const tile = { family, morph: 60, neighbourhood: validN ? neighbourhood : 0 };
 
@@ -227,17 +231,14 @@ function parseTile(params: Map<string, string>, problems: string[]): SharedTile 
     const corners = info.presets[0].outline.length;
     const values = numbers(outline, corners * 2);
     const vertices = values && values.map((_, i) => (i % 2 === 0 ? ([values[i], values[i + 1]] as Vec) : null)).filter((v) => v !== null);
-    if (vertices && isValidOutline(fullOutline(family, vertices))) return { ...tile, preset: null, outline: vertices };
+    if (vertices && !info.fixed && isValidOutline(fullOutline(family, vertices))) return { ...tile, preset: null, outline: vertices };
     problems.push('tile shape');
   }
-  const preset = info.presets.find((p) => p.name === params.get('p'));
-  if (params.has('p') && !preset) problems.push('tile preset');
-  const chosen = preset ?? info.presets[0];
   return { ...tile, preset: chosen.name, outline: chosen.outline };
 }
 
 function neighbourCount(tile: SharedTile) {
-  return tile.family === 'hat' ? HAT_NEIGHBOURHOODS[tile.neighbourhood].count : FAMILIES[tile.family].neighbourhoods[tile.neighbourhood].count;
+  return tile.family === 'hat' ? HAT_NEIGHBOURHOODS[tile.neighbourhood].count : neighbourhoodsOf(tile.family, tile.preset)[tile.neighbourhood].count;
 }
 
 function parseRecipe(text: string, hat: boolean, problems: string[]): Recipe | null {

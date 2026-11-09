@@ -105,6 +105,8 @@ topologyBench('von Neumann', 1, 0b10100, 0b1100);
 topologyBench('hexagonal', 2, 0b10100, 0b1000);
 topologyBench('triangle edges', 3, 0b100, 0b110);
 topologyBench('triangle vertices', 4, 0b10000, 0b111000);
+topologyBench('pentagon type 4, 7 neighbours', 5 + 2 * 3, 0b100, 0b100000);
+topologyBench('pentagon type 15, up to 8 neighbours', 5 + 2 * 14, 0b1000100, 0b110000);
 hatBench(0b100100, 0b1000);
 jsBench(1024, 100);
 jsBench(4096, 10);

@@ -1,6 +1,6 @@
 # Game of Emergence: Entwicklung
 
-Stand: 8. November 2026, nach Schritt 4 von ursprünglich 5, ergänzt um den Hat-Glider, den Torus, das Teilen per Link, den 3D-Donut und den Suchmodus.
+Stand: 9. November 2026, nach Schritt 4 von ursprünglich 5, ergänzt um den Hat-Glider, den Torus, das Teilen per Link, den 3D-Donut, den Suchmodus und die Fünfecke.
 
 Dieses Dokument hält fest, was gebaut wurde, warum es so gebaut ist und was als Nächstes ansteht. Installation und Bedienung stehen in der [Readme.md](Readme.md).
 
@@ -29,6 +29,7 @@ Rust/WASM-Engine (engine/src/)
 | `engine/src/search.rs`, `engine/src/bin/search.rs` | Suchmodus für travelling patterns: Kern und Kommandozeile |
 | `src/sim/worker.ts`, `protocol.ts` | Simulationsschleife, Nachrichten zwischen Stage und Worker |
 | `src/tiles/tiles.ts` | Periodische Kachelungen, Vorlagen, Regelvorschläge |
+| `src/tiles/pentagons.json`, `engine/src/pentagons.rs` | Die 15 Fünfeck-Kachelungen und ihre Nachbartabellen, beide erzeugt |
 | `src/render/renderer.ts` | Periodisches Feld, 3D-Donut und Nachglühen |
 | `src/render/HatScene.ts` | Hat-Kacheln als Instanzen, Zellsuche |
 | `src/patterns/` | Musterbibliothek als JSON, RLE lesen und schreiben, Regeln als Text |
@@ -73,6 +74,10 @@ Der Torus als drehbarer Ring, nur zum Anschauen, siehe „3D-Donut“.
 
 Kommandozeilen-Suche nach Glidern mit reinen B/S-Regeln auf dem Hat, dazu Regeln auf mehreren Ringen und Hat-Zellen im Link, siehe „Suchmodus“.
 
+### Nachtrag: Fünfecke
+
+Alle 15 bekannten Typen konvexer Fünfecke als feste Kacheln, siehe „Fünfecke“.
+
 ## Designentscheidungen
 
 ### Rust/WASM statt JavaScript, numpy oder WebGPU
@@ -87,6 +92,7 @@ numpy schied aus, weil es einen Server oder Pyodide bräuchte. WebGPU ist auf re
 | WASM, Dreieck mit 3 Nachbarn | 1,7 Mrd. |
 | WASM, Dreieck mit 12 Nachbarn | 0,66 Mrd. |
 | WASM, Viereck mit 8 Nachbarn auf dem Torus | 2,6–3,4 Mrd. |
+| WASM, Fünfeck Typ 4 und Typ 15 | 1,0 Mrd. (zuletzt gemessen, die Zeilen darüber stammen aus älteren Läufen) |
 | JavaScript, Viereck mit 8 Nachbarn | 77–93 Mio. |
 
 Bewusst ohne wasm-bindgen und wasm-pack: Die Engine exportiert einfache C-Funktionen, der Build braucht nur Cargo und das WASM-Target.
@@ -113,6 +119,7 @@ Alle periodischen Formen nutzen dieselben Chunks und unterscheiden sich nur in d
 | Hexagonal | 6 | axiale Koordinaten, also ein schräges Quadratgitter |
 | Dreieck, Kanten | 3 | Offsets hängen von der Parität von x + y ab |
 | Dreieck, Ecken | 12 | dto., Reichweite 2 Zellen |
+| Fünfeck, 15 Typen | 5 bis 8 | Offsets hängen von x und y modulo der Periode ab, Reichweite 1 oder 2 Spalten, siehe „Fünfecke“ |
 
 Mathematische Grundlage der Verformung:
 
@@ -121,6 +128,32 @@ Mathematische Grundlage der Verformung:
 - Punktsymmetrische Hexagone kacheln allein durch Verschiebung. Andere kachelnde Hexagon-Typen fehlen deshalb bewusst.
 
 Kacheln werden auf Fläche 1 normiert, damit das Bild beim Verformen gleich groß bleibt.
+
+### Fünfecke
+
+**15 Typen, nicht verformbar.** So viele Typen konvexer Fünfecke sind bekannt. Rao hat 2017 einen Beweis vorgelegt, dass die Liste vollständig ist. Laut Wikipedia hat Thomas Hales die erste Hälfte unabhängig geprüft, und das Peer-Review war dort noch nicht abgeschlossen (Stand der Angabe: Dezember 2017). „Vollständig“ gilt hier also mit diesem Vorbehalt. Viele Typen haben freie Parameter, jede Vorlage zeigt nur ein Beispiel. Formeln wie beim Viereck gibt es nicht für alle, darum sind die Kacheln fest.
+
+**Woher die Kachelungen kommen:** Die Literatur nennt Bedingungen an Seiten und Winkel, die verwendete Quelle aber nicht die Lage der Kacheln. Darum entstehen sie in drei Schritten, deren Ergebnis im Repository liegt:
+
+```
+node scripts/pentagon-tilings.mjs raw.json   # ein Fünfeck je Typ, dann Backtracking
+node scripts/pentagon-tables.mjs raw.json    # Lage auf dem Gitter, Nachbartabellen
+npm run wasm && node scripts/pentagon-rules.mjs   # Regelvorschläge
+```
+
+`pentagon-tilings.mjs` löst die Bedingungen numerisch und füllt dann eine Fläche, nächstgelegene Lücke zuerst. Es prüft jede Lücke darauf, ob Fünfeckwinkel sie überhaupt füllen können, und springt weit zurück, wenn eine gefüllte Fläche nicht periodisch ist, denn am Rand gibt es viele Varianten und keine davon repariert den Kern. Das Ergebnis wird danach ohne Hilfe der Suche geprüft: Gitterkopien einer Periode dürfen sich nicht überlappen und müssen die Gitterzelle genau füllen. Typ 3 sucht nichts, sondern baut sich aus Dreifach-Drehungen um A und D. Der Lauf ist deterministisch, die Zeitgrenze zählt aber Wanduhr. Bei Typ 13 fand sich erst bei A = 105° und größerem Ausschnitt eine Lösung, die Startwerte in `TYPES` sind entsprechend gesetzt.
+
+**Bestätigung:** Für die Typen 1–13 stimmt die gefundene Zahl der Fünfecke pro Periode mit der von Wikipedia überein, soweit sie sich dort einem Typ zuordnen lässt. Die Zahlen 6 und 12 für die Typen 14 und 15 konnte die Quellenprüfung nicht im Original lesen, sie entsprechen aber dem, was der Löser unabhängig findet. Die Winkel von Typ 14 ergeben sich aus den Bedingungen zu 90°, 145,34°, 69,32°, 124,66° und 110,68° und stimmen mit dem Beispiel der Quelle überein. Bei welchen Typen weitere Kachelungen existieren, wurde nicht untersucht: Gezeigt wird die erste mit der kleinsten bekannten Periode.
+
+**Nachbarn:** Viele Typen liegen nicht Kante an Kante, gleiche Ecken reichen zum Erkennen also nicht. Kante heißt hier: gemeinsames Stück positiver Länge. Ecke heißt: Berührung in einem Punkt, auch wenn dort eine Ecke auf einer fremden Kante liegt. Bei den Typen 1, 2, 3 und 12 kommt Letzteres nie allein vor, sie haben nur eine Nachbarschaft. Bei den Typen 10, 11, 13, 14 und 15 haben nicht alle Fünfecke gleich viele Nachbarn, das Panel zeigt dann einen Bereich und das Rule-Panel geht bis zum Höchstwert.
+
+**Engine:** `advance_general` kannte nur zwei Zellarten über die Parität von x + y. Hier gibt es bis zu 12 davon, darum hat `advance_classes` eine Tabelle je Rest von x und y. Eine Chunk-Grenze fällt nicht immer auf eine ganze Periode, weil 64 kein Vielfaches von 3 ist, also richtet sich der Kern nach der Lage des Chunks. Die Perioden sind Rechtecke von 1 bis 4 Spalten und 1 bis 6 Zeilen. `pentagon-tables.mjs` legt die Zellen so, dass kein Nachbar weiter als 2 Spalten und 1 Zeile entfernt ist. Das genügt Chunks und Geisterzellen ohne Änderung. Eine Zellposition bedeutet für die Simulation sonst nichts. Der Typ 4 landet dabei auf einem 2×2-Gitter mit 7 der 8 Moore-Nachbarn.
+
+**Torus:** Seiten müssen ein Vielfaches der Periode und gerade sein. `fitTorus` rastet sie auf den nächsten passenden Wert ein, aus 128×128 wird bei Typ 15 also 128×126. Die eingestellte Größe bleibt erhalten und gilt wieder, sobald die Kachel wechselt.
+
+**Status:** Ein Muster gilt nur als dasselbe, wenn es sich um ganze Perioden verschiebt (`keeps_shape`). Alles andere bleibt „Evolving“, auch wenn es wandert.
+
+**Regelvorschläge:** Suchlauf über Geburt mit 1 oder 2 Werten aus 2–6 und Überleben mit bis zu 3 Werten aus den ersten 6, auf einem Torus 72×72 mit 3 Startwerten. Eine Regel kommt in die Liste, wenn sie weder ausstirbt noch das Feld flutet und ihre Population in den letzten 80 von 360 Generationen in mindestens 15 verschiedenen Werten schwankt. Regeln ohne Überleben stehen hinten, weil ein Feld dort nur Rauschen zeigt. Die Vorschläge sind damit lebendig, aber nicht als beste belegt. Das Ausprobieren auf der Ebene steht aus.
 
 ### Torus
 
@@ -315,9 +348,9 @@ Die Engine-Tests laufen nativ, `npm test` installiert das Target `x86_64-unknown
 
 Letzter Stand: alle grün.
 
-- **74 Engine-Tests:** unter anderem Vergleich mit naiven Referenzen auf allen Gittern, auch auf dem Torus mit Seiten, die kein Vielfaches von 64 sind, und mit B0, Überlappungsfreiheit und Passgenauigkeit der Hats, Flächenfaktor φ⁴ pro Ebene, langfristige Gültigkeit gemeldeter Zustände.
+- **81 Engine-Tests:** unter anderem Vergleich mit naiven Referenzen auf allen Gittern, alle 30 Fünfeck-Tabellen eingeschlossen, auch auf dem Torus mit Seiten, die kein Vielfaches von 64 sind, und mit B0, Überlappungsfreiheit und Passgenauigkeit der Hats, Flächenfaktor φ⁴ pro Ebene, langfristige Gültigkeit gemeldeter Zustände.
 - **`check-patterns.mjs`:** Simuliert alle 24 Muster und prüft Periode, Verschiebung und Wachstum. R-Pentomino und Acorn erreichen ihre aus der Literatur bekannten Endpopulationen 116 und 633.
-- **`check-tiles.mjs`:** Liest die Nachbarn geometrisch aus den Polygonen ab und vergleicht das Ergebnis einer davon gesteuerten naiven Simulation mit der Engine. Prüft außerdem für alle Vorlagen, dass die Kacheln an der Naht eines Torus passen.
+- **`check-tiles.mjs`:** Liest die Nachbarn geometrisch aus den Polygonen ab und vergleicht das Ergebnis einer davon gesteuerten naiven Simulation mit der Engine. Prüft außerdem für alle Vorlagen, dass die Kacheln an der Naht eines Torus passen. Bei den Fünfecken prüft es dazu die Bedingungen des Typs, Konvexität, Lücken, Überlappungen und ob alle Kacheln deckungsgleich sind.
 - **`check-hat-glider.mjs`:** Fliegt Glider A von 11 Startkacheln und vergleicht Population, Richtung und Tempo mit dem Paper. Prüft außerdem als reines WASM ein großes Feld, Zellen nach Position und eine Regel auf 2 Ringen.
 - **`search control`:** Nicht Teil von `npm test`. Prüft die Messung des Suchmodus am bekannten Glider, siehe „Suchmodus“.
 - **`check-share.mjs`:** Rundläufe für RLE und Links über alle Vorlagen, dazu rund 30 fehlerhafte oder böswillige Eingaben, unter anderem eine Deflate-Bombe.
@@ -325,6 +358,10 @@ Letzter Stand: alle grün.
 Die Browsertests liefen mit Playwright und liegen nicht im Repository. Der Suchmodus wurde in Headless-Chrome über das DevTools-Protokoll geprüft: Funde mit Kanten, Kanten+Ecken und 2 Ringen per Link geöffnet, Fund-Datei importiert, einen geladenen Fund erneut geteilt. Rule-Panel und Statusanzeige nennen dabei dieselbe Regel und Periode wie das CLI. Automatische Tests hat das nicht. Das gilt auch für den Torus. Er wurde in Headless-Chrome über das DevTools-Protokoll geprüft: alle Kachelfamilien, Malen über die Naht, Glider-Umlauf, B0, Wechsel zwischen den Feldern, 4096×4096. Beim Verschieben über die Naht stimmten die Bilder bis auf den Versatz pixelgenau überein. Links wurden dort ebenfalls geprüft: erzeugen, in einem frischen Tab öffnen, Bilder vergleichen. Auf Quadraten und Dreiecken war das pixelgenau, auf schrägen Hexagonen und dem Hat wichen bei gleicher Population höchstens 0,3 % der dunklen Pixel ab, vermutlich wegen der gerundeten Kameraposition. Auch der Donut wurde dort geprüft: Seitenverhältnisse, Spiegelung, Drehen, Zoomen, gesperrte Tasten, Hexagone und Dreiecke, 4096×4096. Automatische Tests hat er keine.
 
 ## Bekannte Lücken
+
+- **Fünfecke, nah herangezoomt:** Eine Periode von Typ 15 enthält 12 Fünfecke auf derselben Nachschlagetextur von 512×512 Texeln, die Kanten sehen bei starker Vergrößerung deshalb treppig aus. Eine größere Textur kostet bei jedem Ziehen einer Ecke mehr, das wurde noch nicht gemessen.
+- **Fünfecke, Torus:** Die Naht verläuft bei langen, schrägen Perioden diagonal durch die Kacheln. Das betrifft wie bei den anderen schrägen Formen nur die Anzeige.
+- **Fünfecke, Formen:** Pro Typ gibt es nur ein festes Beispiel, kein Muster und kein RLE. Beim Typwechsel gilt wieder die erste vorgeschlagene Regel.
 
 - **Nur im Headless-Chrome mit Software-Rendering getestet.** Eine echte GPU, Firefox, Safari und Touch-Gesten sind ungeprüft. Im Headless-Browser lag die Anzeige bei rund 17 Bildern pro Sekunde und damit etwa 300 ms hinterher. Auf echter Hardware ist das noch nicht gemessen.
 - **Zell-Limit im Browser ungetestet.** Geprüft ist die Logik mit niedrigem Limit. Ein Lauf am vollen Limit stürzte in Node ab, die Ursache ist nicht abschließend geklärt. Ein Glider erzeugt rund 30 neue Zellen pro Generation, erreicht das Limit im Dauerlauf also nach einiger Zeit und endet dort.
@@ -348,16 +385,12 @@ Die Browsertests liefen mit Playwright und liegen nicht im Repository. Der Suchm
 
 ## Nächste Schritte
 
-1. **Pentagons.** Reguläre Fünfecke kacheln die Ebene nicht, es braucht also einen der kachelnden Typen, etwa die Kairo-Kachelung als Startpunkt.
-   - Eine Periode enthält vier Fünfecke. Der Renderer erlaubt schon heute 4 Polygone pro Periode mit zusammen 24 Ecken, das passt.
-   - Die Engine unterscheidet bisher nur zwei Zellklassen über die Parität. Die Kairo-Kachelung braucht vermutlich vier (x und y modulo 2), `advance_general` muss also verallgemeinert werden.
-   - Vor dem Bau klären: Welche Typen sollen verformbar sein, und wie viele Nachbarn ergeben sich? Das Prüfskript `check-tiles.mjs` kann die Tabellen wie bei den anderen Formen gegen die Geometrie absichern.
-   - Für die Regeln ist wieder ein Suchlauf nötig.
-2. **Mehr Hat-Muster und Regeln.** Glider C (ein Dreifach-Glider) aus monotile-ca lässt sich wie Glider A übernehmen. *Worms* von Trevorrow und die Regel von Gabbay nur nach Klärung der Rechte, monotile-ca nutzt sie mit deren Erlaubnis. Dazu eine Kamera, die einem Muster folgt, und die in HatLife übliche größere Nachbarschaftsreichweite (`N2`).
-3. **Suchmodus auswerten.** Der volle Lauf steht noch aus, siehe „Suchmodus“.
-4. **Test auf echter Hardware.** GPU, Firefox, Safari und Touch, wie unter „Bekannte Lücken“ beschrieben.
-5. **Deployment** auf den eigenen Ubuntu-Server bei Hetzner (CX22). Die Seite ist statisch, der Server muss `.wasm` als `application/wasm` ausliefern. COOP/COEP-Header werden erst nötig, falls später WASM-Threads dazukommen. Erst danach funktionieren geteilte Links auch für andere. Der Server sollte HTTPS nutzen, sonst steht das automatische Kopieren in die Zwischenablage nicht zur Verfügung.
-6. **Mögliche Erweiterungen, noch nicht entschieden:**
+1. **Mehr Hat-Muster und Regeln.** Glider C (ein Dreifach-Glider) aus monotile-ca lässt sich wie Glider A übernehmen. *Worms* von Trevorrow und die Regel von Gabbay nur nach Klärung der Rechte, monotile-ca nutzt sie mit deren Erlaubnis. Dazu eine Kamera, die einem Muster folgt, und die in HatLife übliche größere Nachbarschaftsreichweite (`N2`).
+2. **Suchmodus auswerten.** Der volle Lauf steht noch aus, siehe „Suchmodus“.
+3. **Test auf echter Hardware.** GPU, Firefox, Safari und Touch, wie unter „Bekannte Lücken“ beschrieben.
+4. **Deployment** auf den eigenen Ubuntu-Server bei Hetzner (CX22). Die Seite ist statisch, der Server muss `.wasm` als `application/wasm` ausliefern. COOP/COEP-Header werden erst nötig, falls später WASM-Threads dazukommen. Erst danach funktionieren geteilte Links auch für andere. Der Server sollte HTTPS nutzen, sonst steht das automatische Kopieren in die Zwischenablage nicht zur Verfügung.
+5. **Mögliche Erweiterungen, noch nicht entschieden:**
+   - Fünfecke verformbar machen, wo sich ein Typ dafür eignet (bei Typ 4 ist die Form allein durch die Lage eines Eckpunkts bestimmt)
    - echter chiraler Spectre mit eigener Substitution
    - Muster für Hexagone und Dreiecke suchen
    - Hashlife für extrem lange Läufe auf Quadraten

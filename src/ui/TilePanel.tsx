@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { area, buildTiling, FAMILIES, fullOutline, HAT_NEIGHBOURHOODS, HAT_SHAPES, isValidOutline, type Family, type Vec } from '../tiles/tiles';
+import { area, buildTiling, countLabel, FAMILIES, fullOutline, HAT_NEIGHBOURHOODS, HAT_SHAPES, isValidOutline, neighbourhoodsOf, type Family, type Vec } from '../tiles/tiles';
 
 export interface TileState {
   family: Family | 'hat';
@@ -66,11 +66,11 @@ function TileEditor(props: { family: Family; state: TileState; onDrag: (outline:
       ref={svgRef}
       className="tile-editor"
       viewBox={`${at[0] - VIEW_RADIUS} ${at[1] - VIEW_RADIUS * 0.7} ${2 * VIEW_RADIUS} ${1.4 * VIEW_RADIUS}`}
-      aria-label="Drag the corners to deform the tile"
+      aria-label={FAMILIES[family].fixed ? 'The tile among its neighbours' : 'Drag the corners to deform the tile'}
     >
       <path className="tile-copies" d={copies.join('')} />
       <path className="tile-main" d={pathOf(full)} />
-      {full.map(([x, y], index) =>
+      {!FAMILIES[family].fixed && full.map(([x, y], index) =>
         index < outline.length ? (
           <circle
             key={index}
@@ -164,6 +164,9 @@ export function TilePanel({ state, onChange }: { state: TileState; onChange: (st
   }
   const family = state.family;
   const info = FAMILIES[family];
+  const neighbourhoods = neighbourhoodsOf(family, state.preset);
+  const label = (n: (typeof neighbourhoods)[number]) => `${n.name} (${countLabel(n)})`;
+  const note = info.presets.find((p) => p.name === state.preset)?.note;
   return (
     <>
       {familyChips}
@@ -173,18 +176,19 @@ export function TilePanel({ state, onChange }: { state: TileState; onChange: (st
         active={state.preset}
         onPick={(name) => {
           const preset = info.presets.find((p) => p.name === name)!;
-          onChange({ ...state, preset: preset.name, outline: preset.outline });
+          // Not every type of pentagon has as many neighbourhoods as the last one.
+          const available = neighbourhoodsOf(family, preset.name).length;
+          onChange({ ...state, preset: preset.name, outline: preset.outline, neighbourhood: Math.min(state.neighbourhood, available - 1) });
         }}
       />
-      {info.neighbourhoods.length > 1 && (
+      {note && <p className="note">{note}</p>}
+      {neighbourhoods.length > 1 && (
         <div>
           <span className="caption">Neighbours</span>
           <Chips
-            items={info.neighbourhoods.map((n) => `${n.name} (${n.count})`)}
-            active={`${info.neighbourhoods[state.neighbourhood].name} (${info.neighbourhoods[state.neighbourhood].count})`}
-            onPick={(label) =>
-              onChange({ ...state, neighbourhood: info.neighbourhoods.findIndex((n) => `${n.name} (${n.count})` === label) })
-            }
+            items={neighbourhoods.map(label)}
+            active={label(neighbourhoods[state.neighbourhood])}
+            onPick={(picked) => onChange({ ...state, neighbourhood: neighbourhoods.findIndex((n) => label(n) === picked) })}
           />
         </div>
       )}

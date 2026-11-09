@@ -83,9 +83,9 @@ const glider = [101, 50, 102, 51, 100, 52, 101, 52, 102, 52];
   report(same(sorted(await decodeCells(link.cells)), sorted(glider)), 'link keeps where the cells are');
   report(hash.length < 100, 'a glider makes a short link');
 }
-for (const family of ['quad', 'triangle', 'hexagon']) {
+for (const family of ['quad', 'triangle', 'hexagon', 'pentagon']) {
   for (const preset of FAMILIES[family].presets) {
-    for (let neighbourhood = 0; neighbourhood < FAMILIES[family].neighbourhoods.length; neighbourhood++) {
+    for (let neighbourhood = 0; neighbourhood < (preset.neighbourhoods ?? FAMILIES[family].neighbourhoods).length; neighbourhood++) {
       const tile = { family, preset: preset.name, outline: preset.outline, neighbourhood, morph: 60 };
       const { hash } = await buildLink({ settings: { ...settings, tile }, recipe: null, generation: 0, population: 0, cells: [] });
       const back = parseLink(hash);

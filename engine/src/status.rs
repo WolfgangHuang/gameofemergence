@@ -312,7 +312,7 @@ fn drift(before: &[Object], after: &[Object], period: u32, topology: Topology) -
                 continue;
             }
             let (dx, dy) = (candidate.x0 - o.x0, candidate.y0 - o.y0);
-            if topology.parity_matters() && (dx + dy).rem_euclid(2) != 0 {
+            if !topology.keeps_shape(dx, dy) {
                 continue;
             }
             let distance = dx.abs().max(dy.abs());
@@ -651,7 +651,7 @@ mod tests {
                 if !status.settled() {
                     continue;
                 }
-                settled[topology as usize] += 1;
+                settled[Topology::index(topology)] += 1;
                 let population = w.population;
                 match status {
                     Status::Empty | Status::Still => {
@@ -682,6 +682,54 @@ mod tests {
         }
         // Moore is covered by the tests above; all others must have been exercised.
         assert!(settled[1..].iter().all(|&n| n > 0), "settled per grid: {settled:?}");
+    }
+
+    /// A report has to hold over the long run on the grids with many kinds of cell,
+    /// where only whole periods count as the same shape.
+    #[test]
+    fn reports_hold_up_on_pentagon_grids() {
+        let mut settled = 0;
+        for index in 0..30 {
+            let topology = Topology::Pentagon(index);
+            for seed in 1..=3 {
+                let mut w = World::new();
+                w.set_topology(topology);
+                assert!(w.set_rule(1 << 3, 1 << 2 | 1 << 3));
+                w.soup(0, 0, 36, 36, 0.3, seed * 104_729);
+                let status = run_until_settled(&mut w, 2000);
+                if !status.settled() {
+                    continue;
+                }
+                settled += 1;
+                let population = w.population;
+                match status {
+                    Status::Empty | Status::Still => {
+                        let hash = w.field_hash();
+                        for _ in 0..30 {
+                            w.step();
+                        }
+                        assert_eq!(w.field_hash(), hash, "{topology:?} {status:?}");
+                    }
+                    Status::Oscillating { period } => {
+                        let hash = w.field_hash();
+                        for _ in 0..period * 10 {
+                            w.step();
+                        }
+                        assert_eq!(w.field_hash(), hash, "{topology:?} {status:?}");
+                    }
+                    Status::Drifting { period, .. } => {
+                        for _ in 0..50 {
+                            for _ in 0..period {
+                                w.step();
+                            }
+                            assert_eq!(w.population, population, "{topology:?} {status:?}");
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+        assert!(settled > 0, "nothing ever settled");
     }
 
     fn torus(width: i32, height: i32, cells: &[(i32, i32)]) -> World {

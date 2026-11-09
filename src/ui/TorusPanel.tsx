@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { TorusSize } from '../sim/protocol';
-import { MAX_TORUS_SIDE, MIN_TORUS_SIDE } from '../tiles/tiles';
+import { fitTorus, MAX_TORUS_SIDE, MIN_TORUS_SIDE, type Vec } from '../tiles/tiles';
 
 const SIZES = [64, 128, 256, 512, 1024, 2048, 4096];
 export const DEFAULT_TORUS: TorusSize = { width: 128, height: 128 };
@@ -47,8 +47,13 @@ function Chip(props: { label: string; active: boolean; onPick: () => void }) {
   );
 }
 
-export function TorusPanel(props: { on: boolean; size: TorusSize; onToggle: (on: boolean) => void; onResize: (size: TorusSize) => void }) {
-  const { on, size, onToggle, onResize } = props;
+export function TorusPanel(props: { on: boolean; size: TorusSize; period: Vec; onToggle: (on: boolean) => void; onResize: (size: TorusSize) => void }) {
+  const { on, size, period, onToggle, onResize } = props;
+  const isChosen = (side: number) => {
+    const fitted = fitTorus({ width: side, height: side }, period);
+    return size.width === fitted.width && size.height === fitted.height;
+  };
+  const strict = period[0] > 2 || period[1] > 2;
   return (
     <>
       <div>
@@ -62,14 +67,14 @@ export function TorusPanel(props: { on: boolean; size: TorusSize; onToggle: (on:
         <>
           <div className="chips">
             {SIZES.map((side) => (
-              <Chip key={side} label={String(side)} active={size.width === side && size.height === side} onPick={() => onResize({ width: side, height: side })} />
+              <Chip key={side} label={String(side)} active={isChosen(side)} onPick={() => onResize({ width: side, height: side })} />
             ))}
           </div>
           <div className="sides">
             <SideInput label="Width" value={size.width} onCommit={(width) => onResize({ ...size, width })} />
             <SideInput label="Height" value={size.height} onCommit={(height) => onResize({ ...size, height })} />
           </div>
-          <p className="note">Opposite edges touch, so whatever leaves comes back. Each field keeps its own cells. Shrinking drops what no longer fits. Birth with 0 neighbours is allowed here. Press D or use the 3D button at the top for a view as a ring.</p>
+          <p className="note">Opposite edges touch, so whatever leaves comes back. Each field keeps its own cells. Shrinking drops what no longer fits. Birth with 0 neighbours is allowed here. Press D or use the 3D button at the top for a view as a ring.{strict && ` This tile repeats every ${period[0]} \u00d7 ${period[1]} cells, so the sides snap to fit.`}</p>
         </>
       )}
     </>

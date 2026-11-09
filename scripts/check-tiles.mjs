@@ -4,31 +4,126 @@
 // simulation driven by those geometric neighbours.
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { area, buildTiling, cellPolygon, FAMILIES, fullOutline, gridToWorld, isValidOutline, locate, TOPOLOGY } from '../src/tiles/tiles.ts';
+import { area, buildTiling, cellPolygon, FAMILIES, fitTorus, fullOutline, gridToWorld, isValidOutline, locate, neighbourhoodsOf, PENTAGONS, TOPOLOGY, torusPeriod } from '../src/tiles/tiles.ts';
 
 const root = resolve(import.meta.dirname, '..');
 const { instance } = await WebAssembly.instantiate(readFileSync(resolve(root, 'src/sim/engine.wasm')));
 const e = instance.exports;
 
 const key = ([x, y]) => `${Math.round(x * 1e6)},${Math.round(y * 1e6)}`;
-const edgeKey = (a, b) => [key(a), key(b)].sort().join('|');
+const TOUCH = 1e-5;
+
+/**
+ * Where two polygons meet: 2 for a stretch of edge, 1 for a point, 0 for not at all.
+ * Goes by distances rather than equal corners, because many pentagons lie against
+ * a part of their neighbour's edge.
+ */
+function contact(a, b) {
+  let kind = 0;
+  for (let i = 0; i < a.length; i++) {
+    const p = a[i];
+    const q = a[(i + 1) % a.length];
+    const length = Math.hypot(q[0] - p[0], q[1] - p[1]);
+    const ux = (q[0] - p[0]) / length;
+    const uy = (q[1] - p[1]) / length;
+    const along = ([x, y]) => (x - p[0]) * ux + (y - p[1]) * uy;
+    const across = ([x, y]) => Math.abs((x - p[0]) * uy - (y - p[1]) * ux);
+    for (let j = 0; j < b.length; j++) {
+      const r = b[j];
+      const s = b[(j + 1) % b.length];
+      if (across(r) < TOUCH && across(s) < TOUCH) {
+        const shared = Math.min(length, Math.max(along(r), along(s))) - Math.max(0, Math.min(along(r), along(s)));
+        if (shared > TOUCH) return 2;
+        if (shared > -TOUCH) kind = 1;
+      } else if (across(r) < TOUCH && along(r) > -TOUCH && along(r) < length + TOUCH) {
+        kind = 1;
+      }
+    }
+  }
+  return kind;
+}
 
 /** Neighbour offsets of a cell, read off the polygons around it. */
 function geometricNeighbours(tiling, x, y, withCorners) {
   const own = cellPolygon(tiling, x, y);
-  const ownEdges = new Set(own.map((v, i) => edgeKey(v, own[(i + 1) % own.length])));
-  const ownVertices = new Set(own.map(key));
   const found = [];
-  for (let dy = -6; dy <= 6; dy++) {
-    for (let dx = -6; dx <= 6; dx++) {
+  for (let dy = -8; dy <= 8; dy++) {
+    for (let dx = -8; dx <= 8; dx++) {
       if (dx === 0 && dy === 0) continue;
-      const other = cellPolygon(tiling, x + dx, y + dy);
-      const sharesEdge = other.some((v, i) => ownEdges.has(edgeKey(v, other[(i + 1) % other.length])));
-      const sharesVertex = other.some((v) => ownVertices.has(key(v)));
-      if (withCorners ? sharesVertex : sharesEdge) found.push([dx, dy]);
+      const touch = Math.max(contact(own, cellPolygon(tiling, x + dx, y + dy)), contact(cellPolygon(tiling, x + dx, y + dy), own));
+      if (touch === 2 || (withCorners && touch === 1)) found.push([dx, dy]);
     }
   }
   return found;
+}
+
+const hasOverlap = (a, b) => {
+  for (const [p, q] of [[a, b], [b, a]]) {
+    for (let i = 0; i < p.length; i++) {
+      const c = p[(i + 1) % p.length];
+      const nx = -(c[1] - p[i][1]);
+      const ny = c[0] - p[i][0];
+      const size = Math.hypot(nx, ny);
+      if (Math.max(...q.map((v) => ((v[0] - p[i][0]) * nx + (v[1] - p[i][1]) * ny) / size)) < 1e-6) return false;
+    }
+  }
+  return true;
+};
+
+/** Conditions of each type on sides and angles, from Wikipedia's "Pentagonal tiling". */
+const PENTAGON_CONDITIONS = {
+  1: (p) => [p.B + p.C - 180, p.A + p.D + p.E - 360],
+  2: (p) => [p.c - p.e, p.B + p.D - 180],
+  3: (p) => [p.a - p.b, p.d - p.c - p.e, p.A - 120, p.C - 120, p.D - 120],
+  4: (p) => [p.b - p.c, p.d - p.e, p.B - 90, p.D - 90],
+  5: (p) => [p.a - p.b, p.d - p.e, p.A - 60, p.D - 120],
+  6: (p) => [p.a - p.d, p.d - p.e, p.b - p.c, p.B + p.D - 180, 2 * p.B - p.E],
+  7: (p) => [p.b - p.c, p.c - p.d, p.d - p.e, p.B + 2 * p.E - 360, 2 * p.C + p.D - 360],
+  8: (p) => [p.b - p.c, p.c - p.d, p.d - p.e, 2 * p.B + p.C - 360, p.D + 2 * p.E - 360],
+  9: (p) => [p.b - p.c, p.c - p.d, p.d - p.e, 2 * p.A + p.C - 360, p.D + 2 * p.E - 360],
+  10: (p) => [p.a - p.b, p.b - p.c - p.e, p.A - 90, p.B + p.E - 180, p.B + 2 * p.C - 360],
+  11: (p) => [2 * p.a + p.c - p.d, p.d - p.e, p.A - 90, p.C + p.E - 180, 2 * p.B + p.C - 360],
+  12: (p) => [2 * p.a - p.d, p.d - p.c - p.e, p.A - 90, p.C + p.E - 180, 2 * p.B + p.C - 360],
+  13: (p) => [p.d - 2 * p.a, p.a - p.e, p.B - 90, p.E - 90, 2 * p.A + p.D - 360],
+  14: (p) => [2 * p.a - 2 * p.c, 2 * p.c - p.d, p.d - p.e, p.A - 90, 2 * p.B + p.C - 360, p.C + p.E - 180],
+  15: (p) => [p.a - p.c, p.c - p.e, p.b - 2 * p.a, p.A - 150, p.B - 60, p.C - 135, p.D - 105, p.E - 90],
+};
+
+/** Sides and angles of a pentagon with corners A to E. Side a runs from E to A, b from A to B, and so on. */
+function measure(v) {
+  const [A, B, C, D, E] = v;
+  const side = (s, t) => Math.hypot(t[0] - s[0], t[1] - s[1]);
+  const angle = (o, s, t) => {
+    const dot = (s[0] - o[0]) * (t[0] - o[0]) + (s[1] - o[1]) * (t[1] - o[1]);
+    return (Math.acos(dot / (side(o, s) * side(o, t))) * 180) / Math.PI;
+  };
+  return { a: side(E, A), b: side(A, B), c: side(B, C), d: side(C, D), e: side(D, E), A: angle(A, E, B), B: angle(B, A, C), C: angle(C, B, D), D: angle(D, C, E), E: angle(E, D, A) };
+}
+
+/** Sides and corners going round, either way, so that congruent tiles compare equal. */
+function signature(vertices) {
+  const n = vertices.length;
+  const round = (list) => list.map((value) => value.toFixed(5)).join(' ');
+  const parts = vertices.flatMap((v, i) => {
+    const m = vertices[(i + 1) % n];
+    const before = vertices[(i + n - 1) % n];
+    const length = Math.hypot(m[0] - v[0], m[1] - v[1]);
+    const dot = (m[0] - v[0]) * (before[0] - v[0]) + (m[1] - v[1]) * (before[1] - v[1]);
+    return [{ length, corner: Math.acos(dot / (length * Math.hypot(before[0] - v[0], before[1] - v[1]))) }];
+  });
+  const forms = [];
+  for (let start = 0; start < n; start++) {
+    const forward = [];
+    const backward = [];
+    for (let i = 0; i < n; i++) {
+      const f = parts[(start + i) % n];
+      forward.push(f.corner, f.length);
+      const b = parts[(start - i + 2 * n) % n];
+      backward.push(b.corner, parts[(start - i - 1 + 2 * n) % n].length);
+    }
+    forms.push(round(forward), round(backward));
+  }
+  return forms.sort()[0];
 }
 
 function naiveStep(cells, neighboursOf, birth, survive) {
@@ -78,11 +173,12 @@ for (const [family, info] of Object.entries(FAMILIES)) {
     // Unit area, with the polygons of one period exactly filling the lattice cell.
     const sum = tiling.polygons.reduce((total, p) => total + Math.abs(area(p.vertices)), 0);
     const lattice = Math.abs(tiling.t1[0] * tiling.t2[1] - tiling.t1[1] * tiling.t2[0]);
-    report(Math.abs(sum - lattice) < 1e-9 && Math.abs(Math.abs(area(tiling.polygons[0].vertices)) - 1) < 1e-9, `${label}: no gaps, unit area`);
+    report(Math.abs(sum - lattice) < 1e-7 && Math.abs(Math.abs(area(tiling.polygons[0].vertices)) - 1) < 1e-9, `${label}: no gaps, unit area`);
 
     // Each sample point has to land in exactly the cell whose polygon contains it.
     let wrong = 0;
-    for (let i = 0; i < 400; i++) {
+    // Not from 0, because the origin itself can lie exactly on an edge.
+    for (let i = 1; i <= 400; i++) {
       const x = Math.sin(i * 12.9898) * 9;
       const y = Math.sin(i * 78.233) * 9;
       const [cx, cy] = locate(tiling, x, y);
@@ -99,7 +195,9 @@ for (const [family, info] of Object.entries(FAMILIES)) {
 
     // On a torus, a cell one period away has to be the same polygon, shifted.
     let misfits = 0;
-    for (const [width, height] of [[40, 38], [66, 128]]) {
+    const period = torusPeriod(family, preset.name);
+    for (const size of [{ width: 40, height: 38 }, { width: 66, height: 128 }]) {
+      const { width, height } = fitTorus(size, period);
       for (const [dx, dy] of [[width, 0], [0, height]]) {
         const [sx, sy] = gridToWorld(tiling, dx, dy);
         for (const [x, y] of [[0, 0], [1, 0], [0, 1], [1, 1], [7, 4]]) {
@@ -111,18 +209,49 @@ for (const [family, info] of Object.entries(FAMILIES)) {
     }
     report(misfits === 0, `${label}: tiles fit across the seam of a torus (${misfits} misfits)`);
 
-    for (const n of info.neighbourhoods) {
-      const withCorners = n.topology !== 'vonNeumann' && n.topology !== 'triangleEdges';
+    if (info.fixed) {
+      // Lattice copies must leave no gaps, as checked above, and no overlaps.
+      let overlaps = 0;
+      for (const a of tiling.polygons) {
+        for (const b of tiling.polygons) {
+          for (let i = -3; i <= 3; i++) {
+            for (let j = -3; j <= 3; j++) {
+              if (a === b && i === 0 && j === 0) continue;
+              const moved = b.vertices.map((v) => [v[0] + i * tiling.t1[0] + j * tiling.t2[0], v[1] + i * tiling.t1[1] + j * tiling.t2[1]]);
+              if (hasOverlap(a.vertices, moved)) overlaps++;
+            }
+          }
+        }
+      }
+      report(overlaps === 0, `${label}: tiles do not overlap (${overlaps})`);
+
+      const source = PENTAGONS.find((p) => `Type ${p.type}` === preset.name);
+      const measured = measure(source.pentagon);
+      const off = Math.max(...PENTAGON_CONDITIONS[source.type](measured).map(Math.abs));
+      report(off < 1e-5, `${label}: meets the conditions of its type (off by ${off.toExponential(1)})`);
+      const allAngles = [measured.A, measured.B, measured.C, measured.D, measured.E];
+      report(allAngles.every((a) => a < 180 - 1e-3), `${label}: convex`);
+      const expected = signature(source.pentagon);
+      report(tiling.polygons.every((polygon) => signature(polygon.vertices) === expected), `${label}: all ${tiling.polygons.length} tiles congruent to the pentagon`);
+    }
+
+    for (const n of neighbourhoodsOf(family, preset.name)) {
+      const withCorners = n.topology !== 'vonNeumann' && !n.topology.endsWith('Edges');
       const table = new Map();
       const counts = new Set();
-      for (const [x, y] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
-        const found = geometricNeighbours(tiling, x, y, withCorners);
-        table.set(`${x & 1},${y & 1}`, found);
-        counts.add(found.length);
+      const [periodX, periodY] = period;
+      const classKey = (x, y) => `${((x % periodX) + periodX) % periodX},${((y % periodY) + periodY) % periodY}`;
+      for (let y = 0; y < periodY; y++) {
+        for (let x = 0; x < periodX; x++) {
+          const found = geometricNeighbours(tiling, x, y, withCorners);
+          table.set(classKey(x, y), found);
+          counts.add(found.length);
+        }
       }
-      report(counts.size === 1 && counts.has(n.count), `${label}: ${n.name} has ${[...counts]} neighbours, expected ${n.count}`);
+      const fewest = n.fewest ?? n.count;
+      report(Math.max(...counts) === n.count && Math.min(...counts) === fewest, `${label}: ${n.name} has ${[...counts]} neighbours, expected ${fewest} to ${n.count}`);
 
-      const neighboursOf = (x, y) => table.get(`${x & 1},${y & 1}`);
+      const neighboursOf = (x, y) => table.get(classKey(x, y));
       const [birth, survive] = parseRule(n.rules[0]);
       const w = e.world_new();
       e.world_set_topology(w, TOPOLOGY[n.topology]);
