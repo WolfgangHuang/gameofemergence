@@ -66,6 +66,45 @@ const sub = (a: Vec, b: Vec): Vec => [a[0] - b[0], a[1] - b[1]];
 const scale = (a: Vec, k: number): Vec => [a[0] * k, a[1] * k];
 const cross = (a: Vec, b: Vec) => a[0] * b[1] - a[1] * b[0];
 
+/** Triangulates a simple polygon, tolerating straight-through vertices. */
+export function earClip(points: Vec[]): number[] {
+  let signed = 0;
+  points.forEach((p, i) => {
+    const q = points[(i + 1) % points.length];
+    signed += p[0] * q[1] - q[0] * p[1];
+  });
+  const sign = Math.sign(signed) || 1;
+  const cross = (a: Vec, b: Vec, c: Vec) => sign * ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]));
+  // Straight-through vertices go first: a triangle using one would meet the long edge
+  // that replaces it later in a T-junction, which leaves pinholes when rasterised.
+  const count = points.length;
+  const remaining = points.map((_, i) => i).filter((i) => Math.abs(cross(points[(i + count - 1) % count], points[i], points[(i + 1) % count])) > 1e-9);
+  const triangles: number[] = [];
+  let guard = points.length * points.length;
+  while (remaining.length > 3 && guard-- > 0) {
+    for (let i = 0; i < remaining.length; i++) {
+      const n = remaining.length;
+      const [ia, ib, ic] = [remaining[(i + n - 1) % n], remaining[i], remaining[(i + 1) % n]];
+      const [a, b, c] = [points[ia], points[ib], points[ic]];
+      const turn = cross(a, b, c);
+      // Also skips vertices that clipping has left in line with their neighbours: they
+      // already belong to triangles, so they have to stay until a neighbour goes.
+      if (turn <= 1e-9) continue;
+      // A corner exactly on the triangle's edge blocks it too: cutting along that
+      // edge would split the polygon at the corner.
+      const blocked = remaining.some(
+        (j) => j !== ia && j !== ib && j !== ic && cross(a, b, points[j]) >= -1e-9 && cross(b, c, points[j]) >= -1e-9 && cross(c, a, points[j]) >= -1e-9,
+      );
+      if (blocked) continue;
+      triangles.push(ia, ib, ic);
+      remaining.splice(i, 1);
+      break;
+    }
+  }
+  if (remaining.length === 3) triangles.push(...remaining);
+  return triangles;
+}
+
 export function area(vertices: Vec[]) {
   let sum = 0;
   vertices.forEach((v, i) => (sum += cross(v, vertices[(i + 1) % vertices.length])));

@@ -1,4 +1,5 @@
 import { compile, FIELDS_PER_CELL, GraphScene, type Vec } from './GraphScene';
+import { earClip } from '../tiles/tiles';
 import type { Renderer } from './renderer';
 
 const HR3 = Math.sqrt(3) / 2;
@@ -79,38 +80,6 @@ void main() {
 }`;
 
 const hex = (q: number, r: number): Vec => [q + 0.5 * r, HR3 * r];
-
-/** Triangulates a simple polygon, tolerating straight-through vertices. */
-export function earClip(points: Vec[]): number[] {
-  let signed = 0;
-  points.forEach((p, i) => {
-    const q = points[(i + 1) % points.length];
-    signed += p[0] * q[1] - q[0] * p[1];
-  });
-  const sign = Math.sign(signed) || 1;
-  const cross = (a: Vec, b: Vec, c: Vec) => sign * ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]));
-  const remaining = points.map((_, i) => i);
-  const triangles: number[] = [];
-  let guard = points.length * points.length;
-  while (remaining.length > 3 && guard-- > 0) {
-    for (let i = 0; i < remaining.length; i++) {
-      const n = remaining.length;
-      const [ia, ib, ic] = [remaining[(i + n - 1) % n], remaining[i], remaining[(i + 1) % n]];
-      const [a, b, c] = [points[ia], points[ib], points[ic]];
-      const turn = cross(a, b, c);
-      if (turn < -1e-9) continue;
-      const blocked = remaining.some(
-        (j) => j !== ia && j !== ib && j !== ic && cross(a, b, points[j]) > 1e-9 && cross(b, c, points[j]) > 1e-9 && cross(c, a, points[j]) > 1e-9,
-      );
-      if (blocked) continue;
-      if (turn > 1e-9) triangles.push(ia, ib, ic);
-      remaining.splice(i, 1);
-      break;
-    }
-  }
-  if (remaining.length === 3) triangles.push(...remaining);
-  return triangles;
-}
 
 /** The hat tiling on screen: positions, drawing and finding cells. */
 export class HatScene extends GraphScene {

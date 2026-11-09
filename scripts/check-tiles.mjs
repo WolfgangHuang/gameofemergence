@@ -4,7 +4,7 @@
 // simulation driven by those geometric neighbours.
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { area, buildTiling, cellPolygon, FAMILIES, fitTorus, fullOutline, gridToWorld, isValidOutline, locate, neighbourhoodsOf, PENTAGONS, TOPOLOGY, torusPeriod } from '../src/tiles/tiles.ts';
+import { area, buildTiling, cellPolygon, earClip, FAMILIES, fitTorus, fullOutline, gridToWorld, isValidOutline, locate, neighbourhoodsOf, PENTAGONS, TOPOLOGY, torusPeriod } from '../src/tiles/tiles.ts';
 
 const root = resolve(import.meta.dirname, '..');
 const { instance } = await WebAssembly.instantiate(readFileSync(resolve(root, 'src/sim/engine.wasm')));
@@ -269,6 +269,45 @@ for (const [family, info] of Object.entries(FAMILIES)) {
       report(same, `${label}: engine matches geometry under ${n.rules[0]}`);
     }
   }
+}
+
+// The hat's triangles have to add up to its outline at every position of the slider.
+// Some positions, such as the hat itself, have corners exactly in line with others.
+{
+  // Creating the hat can grow the memory, so the buffer is only fetched afterwards.
+  const pointer = e.hat_outline(e.hat_new());
+  const outline = new Int32Array(e.memory.buffer, pointer, 14 * 4).slice();
+  const hex = (q, r) => [q + 0.5 * r, (Math.sqrt(3) / 2) * r];
+  const wrong = [];
+  const cracked = [];
+  for (let degrees = 6; degrees <= 84; degrees++) {
+    const angle = (degrees * Math.PI) / 180;
+    const [a, b] = [Math.cos(angle), Math.sin(angle) / Math.sqrt(3)];
+    const local = Array.from({ length: 14 }, (_, i) => {
+      const p = hex(outline[i * 4], outline[i * 4 + 1]);
+      const q = hex(outline[i * 4 + 2], outline[i * 4 + 3]);
+      return [a * p[0] + b * q[0], a * p[1] + b * q[1]];
+    });
+    const triangles = earClip(local);
+    let covered = 0;
+    for (let i = 0; i < triangles.length; i += 3) covered += Math.abs(area([local[triangles[i]], local[triangles[i + 1]], local[triangles[i + 2]]]));
+    if (Math.abs(covered - Math.abs(area(local))) > 1e-9) wrong.push(degrees);
+    // A corner of one triangle on the edge of another leaves pinholes when rasterised.
+    const onEdge = (w, u, v) => {
+      const [dx, dy] = [local[v][0] - local[u][0], local[v][1] - local[u][1]];
+      const [px, py] = [local[w][0] - local[u][0], local[w][1] - local[u][1]];
+      const along = (px * dx + py * dy) / (dx * dx + dy * dy);
+      return along > 1e-9 && along < 1 - 1e-9 && Math.abs(px * dy - py * dx) < 1e-9;
+    };
+    const used = new Set(triangles);
+    for (let i = 0; i < triangles.length; i += 3) {
+      for (const [u, v] of [[triangles[i], triangles[i + 1]], [triangles[i + 1], triangles[i + 2]], [triangles[i + 2], triangles[i]]]) {
+        if ([...used].some((w) => w !== u && w !== v && onEdge(w, u, v)) && !cracked.includes(degrees)) cracked.push(degrees);
+      }
+    }
+  }
+  report(wrong.length === 0, `hat triangles match the outline at every angle${wrong.length ? `, wrong at ${wrong.join(', ')} degrees` : ''}`);
+  report(cracked.length === 0, `hat triangles meet corner to corner at every angle${cracked.length ? `, not at ${cracked.join(', ')} degrees` : ''}`);
 }
 
 console.log(failures ? `${failures} checks failed` : 'all tiling checks passed');

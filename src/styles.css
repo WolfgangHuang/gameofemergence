@@ -73,10 +73,17 @@ body,
   position: fixed;
   top: 28px;
   left: 32px;
-  font-size: 12px;
+  font-size: 18px;
   letter-spacing: 0.28em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--ink);
+  /* The paper-coloured edge keeps the letters readable over live cells of their own colour. */
+  text-shadow:
+    0 0 1px var(--paper),
+    0 0 2px var(--paper),
+    0 0 3px var(--paper),
+    0 0 4px color-mix(in srgb, var(--accent) 45%, transparent),
+    0 0 18px color-mix(in srgb, var(--accent) 70%, transparent);
   pointer-events: none;
 }
 
@@ -590,6 +597,14 @@ dd {
 }
 
 @media (max-width: 820px) {
+  /* Leaves room for both buttons beside it on a phone. */
+  .brand {
+    left: 16px;
+    top: 22px;
+    font-size: 13px;
+    letter-spacing: 0.2em;
+  }
+
   .view-controls {
     left: auto;
     right: 12px;
