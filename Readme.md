@@ -79,6 +79,8 @@ Die normalen Seeds müssen klein bleiben, ein Muster mit zu vielen Zellen bricht
 
 Teile von mehreren Rechnern führt `./search merge --out results/alle a b c` zusammen. Die Fortschrittsanzeige nennt Restzeit, Regelklassen und bisherige Funde. Alle Optionen zeigt `./search --help`.
 
+**Oszillatoren ansehen:** `./search unique --out results/moore-klein` lässt die Funde erneut laufen, zählt die wirklich verschiedenen Formen (unabhängig von Ort, Drehung und Spiegelung) und schreibt `unique.html`, eine sortier- und filterbare Tabelle mit Links in die Seite, die dafür mit `npm run dev` laufen muss.
+
 **Ergebnisse** in `--out`: `SUMMARY.md` mit den besten 20, `results.jsonl`, `catalog.jsonl` mit der Einstufung jeder Regel, und `finds/` mit einer Datei je Fund. Eine Fund-Datei öffnest du in der Seite unter **Share & export** mit **Open a find file**, oder du hängst den Wert von `link` an die Adresse an. Sie startet pausiert, `Space` lässt sie laufen.
 
 ## Installation

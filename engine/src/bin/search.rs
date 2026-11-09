@@ -83,6 +83,7 @@ search: patterns that travel on the hat tiling, under two-state rules
   search control               fly the known glider through all tests
   search replay --rules R --neighborhood H --cells a,b,c,...   run one seed again
   search merge --out DIR A B   join batches from other machines, then finalize
+  search unique --out DIR      how many forms the settled finds really have, as unique.html
 
 What to search
   --tiling hat|spectre         spectre: same graph, so same results, other shape in the page
@@ -851,6 +852,173 @@ fn command_merge(o: &Options) -> Result<(), String> {
     Ok(())
 }
 
+/// What one line of `results.jsonl` settled into.
+struct Settled {
+    line: usize,
+    form: Vec<[i32; 3]>,
+    period: u32,
+    min_pop: usize,
+    max_pop: usize,
+    cells: usize,
+}
+
+/// A list of numbers from a line of our own JSON.
+fn start_cells(line: &str) -> Option<Vec<CellKey>> {
+    let from = line.find("\"start_cells\":[")? + 15;
+    let rest = &line[from..];
+    let end = rest.find("]]")? + 1;
+    let numbers: Vec<i32> = rest[..end].split(|c: char| !(c.is_ascii_digit() || c == '-')).filter(|t| !t.is_empty()).map(|t| t.parse().ok()).collect::<Option<_>>()?;
+    Some(numbers.chunks_exact(5).map(|k| [k[0], k[1], k[2], k[3], k[4]]).collect())
+}
+
+/// Runs a find again up to its cycle, and describes the cycle by its emptiest moments.
+fn settle(world: &mut HatWorld, line: usize, text: &str, hood: Hood) -> Option<Settled> {
+    let rule = Rule::parse(field(text, "rule")?, hood).ok()?;
+    let period: u32 = field(text, "period")?.parse().ok()?;
+    let generations: u32 = field(text, "generations")?.parse().ok()?;
+    world.reset_when_ruled();
+    world.set_masks_when_empty(rule.birth, rule.survive, hood.radius());
+    for key in start_cells(text)? {
+        let cell = world.cell_of(key)?;
+        world.set_alive(cell);
+    }
+    for _ in 0..generations {
+        world.step();
+    }
+    let mut phases: Vec<Vec<u32>> = Vec::new();
+    let mut visited: HashSet<u32> = HashSet::new();
+    let (mut min_pop, mut max_pop) = (usize::MAX, 0);
+    for _ in 0..period.max(1) {
+        let live = world.live();
+        visited.extend(live.iter().copied());
+        if live.len() < min_pop {
+            min_pop = live.len();
+            phases.clear();
+        }
+        max_pop = max_pop.max(live.len());
+        if live.len() == min_pop {
+            phases.push(live.to_vec());
+        }
+        world.step();
+    }
+    let form = phases.iter().map(|phase| canonical_form(&phase.iter().map(|&c| world.key_of(c)).collect::<Vec<_>>())).min()?;
+    Some(Settled { line, form, period, min_pop, max_pop, cells: visited.len() })
+}
+
+#[derive(Default)]
+struct FormEntry {
+    period: u32,
+    min_pop: usize,
+    max_pop: usize,
+    cells: usize,
+    entries: usize,
+    occurrences: u64,
+    rules: HashSet<String>,
+    example: usize,
+}
+
+/// How many different forms lie behind the entries of a finished run. The search only
+/// keeps one entry per rule, period and population, so this is a lower bound.
+fn command_unique(o: &Options) -> Result<(), String> {
+    let out = PathBuf::from(o.get("out", "results"));
+    let lines = read_lines(&out.join("results.jsonl"));
+    if lines.is_empty() {
+        return Err(format!("no results.jsonl with finds in {}", out.display()));
+    }
+    let hood = field(&lines[0], "type").and_then(Hood::parse).ok_or("cannot read the neighbourhood")?;
+    let settled_lines: Vec<usize> = (0..lines.len()).filter(|&i| matches!(field(&lines[i], "category"), Some("oscillator" | "still-life"))).collect();
+    let workers: usize = o.number("workers", std::thread::available_parallelism().map_or(1, |n| n.get()))?;
+    eprintln!("running {} finds again on {workers} workers ...", settled_lines.len());
+    let (next, done) = (AtomicUsize::new(0), AtomicUsize::new(0));
+    let started = Instant::now();
+    let parts: Vec<Vec<Settled>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                let (next, done, lines, settled_lines) = (&next, &done, &lines, &settled_lines);
+                scope.spawn(move || {
+                    let fresh = || {
+                        let mut world = control_world();
+                        world.observing = false;
+                        if hood == Hood::Edge {
+                            world.set_edges_only(true);
+                        }
+                        world
+                    };
+                    let mut world = fresh();
+                    let mut found = Vec::new();
+                    while let Some(&line) = settled_lines.get(next.fetch_add(1, Ordering::Relaxed)) {
+                        if world.cell_count() > 400_000 {
+                            world = fresh();
+                        }
+                        found.extend(settle(&mut world, line, &lines[line], hood));
+                        let count = done.fetch_add(1, Ordering::Relaxed) + 1;
+                        if count % 20_000 == 0 {
+                            eprintln!("  {count}/{} in {}", settled_lines.len(), clock(started.elapsed().as_secs_f64()));
+                        }
+                    }
+                    found
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().expect("worker finishes")).collect()
+    });
+    let mut settled: Vec<Settled> = parts.into_iter().flatten().collect();
+    settled.sort_by_key(|s| s.line);
+    let mut forms: HashMap<(u32, Vec<[i32; 3]>), FormEntry> = HashMap::new();
+    for s in settled {
+        let line = &lines[s.line];
+        let entry = forms.entry((s.period, s.form)).or_default();
+        if entry.entries == 0 {
+            (entry.period, entry.min_pop, entry.max_pop, entry.cells, entry.example) = (s.period, s.min_pop, s.max_pop, s.cells, s.line);
+        }
+        entry.entries += 1;
+        entry.occurrences += field(line, "occurrences").and_then(|v| v.parse().ok()).unwrap_or(1);
+        entry.rules.insert(field(line, "rule").unwrap_or("").to_string());
+    }
+    let mut list: Vec<FormEntry> = forms.into_values().collect();
+    list.sort_by(|a, b| b.period.cmp(&a.period).then(b.rules.len().cmp(&a.rules.len())).then(a.example.cmp(&b.example)));
+
+    let oscillators = list.iter().filter(|f| f.period > 1).count();
+    let still = list.len() - oscillators;
+    println!("{} entries: {} forms of oscillators and {} of still lifes", settled_lines.len(), oscillators, still);
+    let mut by_period: BTreeMap<u32, usize> = BTreeMap::new();
+    list.iter().filter(|f| f.period > 1).for_each(|f| *by_period.entry(f.period).or_default() += 1);
+    let common: Vec<String> = by_period.iter().take(12).map(|(p, n)| format!("{p}: {n}")).collect();
+    println!("forms by period: {} ...", common.join(", "));
+    println!("different periods: {}, longest {}", by_period.len(), by_period.keys().last().copied().unwrap_or(0));
+    let shared = list.iter().filter(|f| f.rules.len() > 1).count();
+    println!("forms found under more than one rule: {shared}, under most rules: {}", list.iter().map(|f| f.rules.len()).max().unwrap_or(0));
+
+    const TABLE_LIMIT: usize = 5000;
+    let base_url = o.get("base-url", "http://localhost:5173/");
+    let mut rows = String::new();
+    let mut jsonl = String::new();
+    for (i, f) in list.iter().enumerate() {
+        let line = &lines[f.example];
+        let link = line.find("\"link\":\"").map_or("", |p| line[p + 8..].trim_end_matches("\"}"));
+        let rule = field(line, "rule").unwrap_or("");
+        jsonl.push_str(&format!(
+            "{{\"form\":{i},\"period\":{},\"min_pop\":{},\"max_pop\":{},\"cells_visited\":{},\"entries\":{},\"occurrences\":{},\"rules\":{},\"example_rule\":\"{rule}\",\"settled_after\":{},\"link\":\"{link}\"}}\n",
+            f.period, f.min_pop, f.max_pop, f.cells, f.entries, f.occurrences, f.rules.len(), field(line, "generations").unwrap_or("0")
+        ));
+        if i < TABLE_LIMIT {
+            rows.push_str(&format!(
+                "<tr><td>{}</td><td>{}–{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td><code>{rule}</code></td><td><a href=\"{base_url}{link}\">open</a></td></tr>\n",
+                f.period, f.min_pop, f.max_pop, f.cells, f.rules.len(), f.occurrences, field(line, "generations").unwrap_or("0")
+            ));
+        }
+    }
+    fs::write(out.join("unique.jsonl"), jsonl).map_err(|e| e.to_string())?;
+    let note = if list.len() > TABLE_LIMIT { format!("Showing the {TABLE_LIMIT} with the longest periods of {} forms, all of them are in unique.jsonl.", list.len()) } else { format!("{} forms.", list.len()) };
+    let page = format!(
+        "<!doctype html><meta charset=utf-8><title>Forms in {}</title><style>body{{font:14px system-ui;margin:24px;color:#222;background:#fff}}table{{border-collapse:collapse}}th,td{{padding:3px 12px;text-align:right;border-bottom:1px solid #eee}}th{{cursor:pointer;position:sticky;top:0;background:#fff}}code{{font-size:13px}}input{{padding:6px;margin:8px 0;width:260px}}</style><h1>{oscillators} oscillators, {still} still lifes</h1><p>{note} Run <code>npm run dev</code> for the links, press Space on the page to start. A click on a heading sorts.</p><input id=f placeholder=\"Filter, e.g. B35/S\"><table id=t><thead><tr><th>Period<th>Population<th>Cells used<th>Rules<th>Seen<th>Settles after<th>First rule<th></thead><tbody>\n{rows}</tbody></table><script>const b=document.querySelector('#t tbody');document.querySelector('#f').oninput=e=>{{for(const r of b.rows)r.hidden=!r.textContent.includes(e.target.value)}};document.querySelectorAll('th').forEach((h,c)=>h.onclick=()=>{{const n=r=>parseFloat(r.cells[c].textContent)||0;[...b.rows].sort((x,y)=>n(y)-n(x)).forEach(r=>b.append(r))}})</script>",
+        out.display()
+    );
+    fs::write(out.join("unique.html"), page).map_err(|e| e.to_string())?;
+    println!("wrote unique.html and unique.jsonl in {}", out.display());
+    Ok(())
+}
+
 fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let result = parse_args(argv.clone()).and_then(|o| {
@@ -864,6 +1032,7 @@ fn main() {
             Some("control") => command_control(&o),
             Some("replay") => command_replay(&o),
             Some("merge") => command_merge(&o),
+            Some("unique") => command_unique(&o),
             Some(other) => Err(format!("unknown command {other}, see --help")),
         }
     });

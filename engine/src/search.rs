@@ -1591,6 +1591,42 @@ pub fn verify_in_patches(hood: Hood, mut setup: impl FnMut(&mut HatWorld), limit
     checks
 }
 
+/// A form of cells that means the same wherever it sits, however it is turned or
+/// mirrored: its smallest description over the 12 isometries of the lattice. Equal
+/// forms can still behave differently, as the tiles around them may differ.
+pub fn canonical_form(keys: &[CellKey]) -> Vec<[i32; 3]> {
+    let mut best: Option<Vec<[i32; 3]>> = None;
+    for turn in 0..6 {
+        for mirror in [false, true] {
+            let mut cells: Vec<[i32; 3]> = keys
+                .iter()
+                .map(|k| {
+                    let (rotation, flip) = (k[0] & 7, k[0] & 8 != 0);
+                    let (mut q, mut r) = (k[1] + k[3], k[2] + k[4]);
+                    if mirror {
+                        (q, r) = (q + r, -r);
+                    }
+                    for _ in 0..turn {
+                        (q, r) = (-r, q + r);
+                    }
+                    let rotation = if mirror { (turn + 6 - rotation) % 6 } else { (turn + rotation) % 6 };
+                    [rotation + if flip != mirror { 8 } else { 0 }, q, r]
+                })
+                .collect();
+            let (low_q, low_r) = cells.iter().fold((i32::MAX, i32::MAX), |m, c| (m.0.min(c[1]), m.1.min(c[2])));
+            cells.iter_mut().for_each(|c| {
+                c[1] -= low_q;
+                c[2] -= low_r;
+            });
+            cells.sort_unstable();
+            if best.as_ref().is_none_or(|b| cells < *b) {
+                best = Some(cells);
+            }
+        }
+    }
+    best.unwrap_or_default()
+}
+
 /// James Edmond's glider A, with four states. It is the one pattern known to travel,
 /// so it tests the whole measurement, even though the search itself has only two.
 pub const GLIDER_A_TABLE: [u32; 42] = [
@@ -1702,6 +1738,72 @@ mod tests {
             late_generations: 2000,
             late_max_pop: 300,
         }
+    }
+
+    #[test]
+    fn forms_are_the_same_wherever_they_are() {
+        // Real cells, moved through the frames of the tiling, so that a wrong formula
+        // for how an isometry acts on a hat would show.
+        let mut world = HatWorld::new();
+        let root = world.cell_of(world.key_of(40)).unwrap();
+        let cells = ball(&mut world, root, 1);
+        let keys: Vec<CellKey> = cells.iter().map(|&c| world.key_of(c)).collect();
+        let form = canonical_form(&keys);
+        assert_eq!(form.len(), keys.len());
+        for turn in 0..6i32 {
+            for mirror in [false, true] {
+                let moved: Vec<CellKey> = keys
+                    .iter()
+                    .map(|k| {
+                        let (rotation, flip) = (k[0] & 7, k[0] & 8 != 0);
+                        let turned = |(mut q, mut r): (i32, i32)| {
+                            if mirror {
+                                (q, r) = (q + r, -r);
+                            }
+                            for _ in 0..turn {
+                                (q, r) = (-r, q + r);
+                            }
+                            (q, r)
+                        };
+                        let (pq, pr) = turned((k[1], k[2]));
+                        let (qq, qr) = turned((k[3], k[4]));
+                        let rotation = if mirror { (turn + 6 - rotation) % 6 } else { (turn + rotation) % 6 };
+                        [rotation + if flip != mirror { 8 } else { 0 }, pq + 17, pr - 5, qq - 3, qr + 9]
+                    })
+                    .collect();
+                assert_eq!(canonical_form(&moved), form, "turn {turn} mirror {mirror}");
+            }
+        }
+        // Hats that fit together stay on one level: a form must tell its parts apart.
+        assert_ne!(canonical_form(&keys[..keys.len() - 1]), form);
+    }
+
+    /// The tiling itself proves the formula: the same supertile occurs in many
+    /// places and orientations, and the same form must come out each time.
+    #[test]
+    fn a_metatile_has_one_form_everywhere() {
+        let mut world = HatWorld::new();
+        world.load_around(0.0, 0.0, 300.0);
+        let mut forms: HashSet<Vec<[i32; 3]>> = HashSet::new();
+        let mut seen = 0;
+        for cell in 0..world.cell_count() as u32 {
+            if !world.is_mirrored(cell) {
+                continue;
+            }
+            // Around a mirrored hat lies the H metatile it belongs to, and the three
+            // hats of that metatile touching it always sit the same way.
+            let around: Vec<u32> = world.touching(cell).iter().copied().filter(|&n| world.metatile(n) == 0).collect();
+            let inner: Vec<u32> = std::iter::once(cell).chain(around.iter().copied().filter(|&n| !world.is_mirrored(n))).collect();
+            if inner.len() == 4 {
+                let keys: Vec<CellKey> = inner.iter().map(|&c| world.key_of(c)).collect();
+                forms.insert(canonical_form(&keys));
+                seen += 1;
+            }
+        }
+        assert!(seen > 500, "only {seen}");
+        // Neighbouring H metatiles may touch too, so a few variants are possible, but
+        // far fewer than the 12 turned and mirrored copies a broken formula would give.
+        assert!(forms.len() < 12, "{} forms from {seen} metatiles", forms.len());
     }
 
     #[test]
