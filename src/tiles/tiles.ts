@@ -377,7 +377,7 @@ export function neighbourhoodsOf(family: Family, presetName: string | null): Nei
 }
 
 /** A neighbour count for the panels, as a range where cells differ. */
-export const countLabel = (n: Neighbourhood) => (n.fewest === undefined ? `${n.count}` : `${n.fewest}\u2013${n.count}`);
+export const countLabel = (n: { count: number; fewest?: number }) => (n.fewest === undefined ? `${n.count}` : `${n.fewest}\u2013${n.count}`);
 
 export function torusPeriod(family: Family, presetName: string | null): Vec {
   return FAMILIES[family].presets.find((p) => p.name === presetName)?.period ?? [2, 2];
@@ -400,6 +400,14 @@ export type HatTopology = 'hatVertices' | 'hatEdges';
 export const HAT_NEIGHBOURHOODS: { name: string; topology: HatTopology; count: number; rules: string[] }[] = [
   { name: 'Edges and corners', topology: 'hatVertices', count: 7, rules: ['B25/S3', 'B25/S36', 'B25/S35', 'B37/S123', 'B36/S234', 'B24/S46'] },
   { name: 'Edges only', topology: 'hatEdges', count: 6, rules: ['B23/S4', 'B2/S246', 'B26/S24', 'B2/S24', 'B2/S245', 'B24/S26'] },
+];
+
+export type PenroseTopology = 'penroseVertices' | 'penroseEdges';
+
+/** Found by scripts/penrose-rules.mjs. Rhombs have 4 edges and touch 7 to 11 others in all. */
+export const PENROSE_NEIGHBOURHOODS: { name: string; topology: PenroseTopology; count: number; fewest?: number; rules: string[] }[] = [
+  { name: 'Edges and corners', topology: 'penroseVertices', count: 11, fewest: 7, rules: ['B36/S246', 'B3/S125', 'B34/S16', 'B35/S256', 'B35/S127', 'B34/S46'] },
+  { name: 'Edges only', topology: 'penroseEdges', count: 4, rules: ['B23/S12', 'B2/S12', 'B24/S124', 'B23/S13', 'B23/S23', 'B24/S12'] },
 ];
 
 export const MIN_TORUS_SIDE = 8;

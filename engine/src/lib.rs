@@ -1,15 +1,18 @@
 //! C-style exports consumed by `src/sim/worker.ts`. Kept free of wasm-bindgen so
 //! the build only needs cargo and the wasm32 target.
 
+pub mod graph_world;
 pub mod hat;
 pub mod hat_world;
 pub mod life;
+pub mod penrose;
 pub mod pentagons;
 pub mod search;
 pub mod status;
 
 use hat_world::HatWorld;
 use life::{Topology, World};
+use penrose::PenroseWorld;
 use status::Status;
 
 /// # Safety
@@ -181,165 +184,198 @@ pub unsafe extern "C" fn world_bounds(w: *mut World) -> *const i32 {
     }
 }
 
-// The hat tiling, which lives on its own graph rather than on the integer grid.
+// Tilings without a lattice, which live on a graph rather than on the integer grid.
+// Hat and Penrose share these functions, whose names are older than the latter.
 
-#[unsafe(no_mangle)]
-pub extern "C" fn hat_new() -> *mut HatWorld {
-    Box::into_raw(Box::new(HatWorld::new()))
+pub enum Graph {
+    Hat(HatWorld),
+    Penrose(PenroseWorld),
+}
+
+macro_rules! on_graph {
+    ($w:expr, $g:ident => $body:expr) => {
+        match unsafe { &mut *$w } {
+            Graph::Hat($g) => $body,
+            Graph::Penrose($g) => $body,
+        }
+    };
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_free(w: *mut HatWorld) {
+pub extern "C" fn hat_new() -> *mut Graph {
+    Box::into_raw(Box::new(Graph::Hat(HatWorld::new())))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn penrose_new() -> *mut Graph {
+    Box::into_raw(Box::new(Graph::Penrose(PenroseWorld::new())))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hat_free(w: *mut Graph) {
     drop(unsafe { Box::from_raw(w) });
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_set_rule(w: *mut HatWorld, birth: u32, survive: u32) -> u32 {
-    unsafe { (*w).set_rule(birth as u16, survive as u16) as u32 }
+pub unsafe extern "C" fn hat_set_rule(w: *mut Graph, birth: u32, survive: u32) -> u32 {
+    on_graph!(w, g => g.set_rule(birth as u16, survive as u16) as u32)
 }
 
 /// Reads `n` values from the scratch buffer, see `set_table_from_scratch`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_set_table(w: *mut HatWorld, n: u32) {
-    unsafe { (*w).set_table_from_scratch(n as usize) }
+pub unsafe extern "C" fn hat_set_table(w: *mut Graph, n: u32) {
+    on_graph!(w, g => g.set_table_from_scratch(n as usize))
 }
 
 /// Born with birth_low..=birth_high live cells within `radius` rings, surviving with
 /// survive_low..=survive_high. Returns 0 if this rule cannot be run.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_set_range_rule(w: *mut HatWorld, radius: u32, birth_low: u32, birth_high: u32, survive_low: u32, survive_high: u32) -> u32 {
+pub unsafe extern "C" fn hat_set_range_rule(w: *mut Graph, radius: u32, birth_low: u32, birth_high: u32, survive_low: u32, survive_high: u32) -> u32 {
     let count = |n: u32| n.min(u8::MAX as u32) as u8;
-    unsafe { (*w).set_range_rule(count(radius), (count(birth_low), count(birth_high)), (count(survive_low), count(survive_high))) as u32 }
+    on_graph!(w, g => g.set_range_rule(count(radius), (count(birth_low), count(birth_high)), (count(survive_low), count(survive_high))) as u32)
 }
 
 /// Applies `n` values previously written to the scratch buffer, five per cell.
 /// Returns how many cells the tiling does not have.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_paint_keys(w: *mut HatWorld, n: u32, alive: u32) -> u32 {
-    unsafe { (*w).paint_keys_from_scratch(n as usize, alive != 0) }
+pub unsafe extern "C" fn hat_paint_keys(w: *mut Graph, n: u32, alive: u32) -> u32 {
+    on_graph!(w, g => g.paint_keys_from_scratch(n as usize, alive != 0))
 }
 
 /// The live cells, five values each. Valid until the next call into the engine.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_live(w: *mut HatWorld) -> *const i32 {
-    unsafe { (*w).export_live().as_ptr() }
+pub unsafe extern "C" fn hat_live(w: *mut Graph) -> *const i32 {
+    on_graph!(w, g => g.export_live().as_ptr())
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_seed_pair(w: *mut HatWorld, cell: u32, first: u32, second: u32) {
-    unsafe { (*w).seed_pair(cell, first as u8, second as u8) }
+pub unsafe extern "C" fn hat_seed_pair(w: *mut Graph, cell: u32, first: u32, second: u32) {
+    on_graph!(w, g => g.seed_pair(cell, first as u8, second as u8))
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_set_edges_only(w: *mut HatWorld, edges_only: u32) {
-    unsafe { (*w).set_edges_only(edges_only != 0) }
+pub unsafe extern "C" fn hat_set_edges_only(w: *mut Graph, edges_only: u32) {
+    on_graph!(w, g => g.set_edges_only(edges_only != 0))
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_step(w: *mut HatWorld, n: u32) {
-    let w = unsafe { &mut *w };
-    for _ in 0..n {
-        w.step();
-    }
+pub unsafe extern "C" fn hat_step(w: *mut Graph, n: u32) {
+    on_graph!(w, g => {
+        for _ in 0..n {
+            g.step();
+        }
+    })
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_clear(w: *mut HatWorld) {
-    unsafe { (*w).clear() }
+pub unsafe extern "C" fn hat_clear(w: *mut Graph) {
+    on_graph!(w, g => g.clear())
 }
 
 /// Returns a buffer for `n` u32 values, valid until the next call into the engine.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_scratch(w: *mut HatWorld, n: u32) -> *mut u32 {
-    let w = unsafe { &mut *w };
-    w.scratch.resize(n as usize, 0);
-    w.scratch.as_mut_ptr()
+pub unsafe extern "C" fn hat_scratch(w: *mut Graph, n: u32) -> *mut u32 {
+    on_graph!(w, g => {
+        g.scratch.resize(n as usize, 0);
+        g.scratch.as_mut_ptr()
+    })
 }
 
 /// Applies `n` cell ids previously written to the scratch buffer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_paint(w: *mut HatWorld, n: u32, alive: u32) {
-    unsafe { (*w).paint_scratch(n as usize, alive != 0) }
+pub unsafe extern "C" fn hat_paint(w: *mut Graph, n: u32, alive: u32) {
+    on_graph!(w, g => g.paint_scratch(n as usize, alive != 0))
 }
 
 /// Positions are lattice coordinates relative to the hat at the origin.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_soup(w: *mut HatWorld, x: f64, y: f64, radius: f64, density: f64, seed: u32) {
-    unsafe { (*w).soup(x, y, radius, density, seed) }
+pub unsafe extern "C" fn hat_soup(w: *mut Graph, x: f64, y: f64, radius: f64, density: f64, seed: u32) {
+    on_graph!(w, g => g.soup(x, y, radius, density, seed))
 }
 
 /// Generates whatever is missing around a position, and returns the cell count.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_load(w: *mut HatWorld, x: f64, y: f64, radius: f64) -> u32 {
-    unsafe { (*w).load_around(x, y, radius) };
-    unsafe { (*w).cell_count() as u32 }
+pub unsafe extern "C" fn hat_load(w: *mut Graph, x: f64, y: f64, radius: f64) -> u32 {
+    on_graph!(w, g => {
+        g.load_around(x, y, radius);
+        g.cell_count() as u32
+    })
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_cell_count(w: *const HatWorld) -> u32 {
-    unsafe { (*w).cell_count() as u32 }
+pub unsafe extern "C" fn hat_cell_count(w: *const Graph) -> u32 {
+    on_graph!(w.cast_mut(), g => g.cell_count() as u32)
 }
 
 /// Five i32 per cell from `from` on: rotation + 8 * flip, then p.q, p.r, q.q, q.r.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_cells(w: *mut HatWorld, from: u32) -> *const i32 {
-    unsafe { (*w).export_cells(from as usize) }.as_ptr()
+pub unsafe extern "C" fn hat_cells(w: *mut Graph, from: u32) -> *const i32 {
+    on_graph!(w, g => g.export_cells(from as usize).as_ptr())
 }
 
 /// Four i32 for each of the outline's 14 vertices: p.q, p.r, q.q, q.r.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_outline(w: *mut HatWorld) -> *const i32 {
-    unsafe { (*w).export_outline() }.as_ptr()
+pub unsafe extern "C" fn hat_outline(w: *mut Graph) -> *const i32 {
+    match unsafe { &mut *w } {
+        Graph::Hat(g) => g.export_outline().as_ptr(),
+        Graph::Penrose(_) => std::ptr::null(),
+    }
 }
 
 /// One byte per cell, 255 for live cells.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_states(w: *const HatWorld) -> *const u8 {
-    unsafe { (*w).states() }.as_ptr()
+pub unsafe extern "C" fn hat_states(w: *const Graph) -> *const u8 {
+    on_graph!(w.cast_mut(), g => g.states().as_ptr())
 }
 
 /// The ratio of b-part to a-part of long distances, as a complex number: `q = k * p`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_ratio_re(w: *const HatWorld) -> f64 {
-    unsafe { (*w).ratio() }.0
+pub unsafe extern "C" fn hat_ratio_re(w: *const Graph) -> f64 {
+    match unsafe { &*w } {
+        Graph::Hat(g) => g.ratio().0,
+        Graph::Penrose(_) => 0.0,
+    }
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_ratio_im(w: *const HatWorld) -> f64 {
-    unsafe { (*w).ratio() }.1
+pub unsafe extern "C" fn hat_ratio_im(w: *const Graph) -> f64 {
+    match unsafe { &*w } {
+        Graph::Hat(g) => g.ratio().1,
+        Graph::Penrose(_) => 0.0,
+    }
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_capped(w: *const HatWorld) -> u32 {
-    unsafe { (*w).capped as u32 }
+pub unsafe extern "C" fn hat_capped(w: *const Graph) -> u32 {
+    on_graph!(w.cast_mut(), g => g.capped as u32)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_generation(w: *const HatWorld) -> f64 {
-    unsafe { (*w).generation as f64 }
+pub unsafe extern "C" fn hat_generation(w: *const Graph) -> f64 {
+    on_graph!(w.cast_mut(), g => g.generation as f64)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_population(w: *const HatWorld) -> f64 {
-    unsafe { (*w).population as f64 }
+pub unsafe extern "C" fn hat_population(w: *const Graph) -> f64 {
+    on_graph!(w.cast_mut(), g => g.population as f64)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_status_kind(w: *const HatWorld) -> u32 {
-    status_kind(unsafe { (*w).detector.status })
+pub unsafe extern "C" fn hat_status_kind(w: *const Graph) -> u32 {
+    status_kind(on_graph!(w.cast_mut(), g => g.detector.status))
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_status_period(w: *const HatWorld) -> u32 {
-    status_period(unsafe { (*w).detector.status })
+pub unsafe extern "C" fn hat_status_period(w: *const Graph) -> u32 {
+    status_period(on_graph!(w.cast_mut(), g => g.detector.status))
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_status_detail(w: *const HatWorld) -> u32 {
-    status_detail(unsafe { (*w).detector.status })
+pub unsafe extern "C" fn hat_status_detail(w: *const Graph) -> u32 {
+    status_detail(on_graph!(w.cast_mut(), g => g.detector.status))
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hat_status_since(w: *const HatWorld) -> f64 {
-    unsafe { (*w).detector.since as f64 }
+pub unsafe extern "C" fn hat_status_since(w: *const Graph) -> f64 {
+    on_graph!(w.cast_mut(), g => g.detector.since as f64)
 }

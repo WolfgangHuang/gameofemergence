@@ -101,6 +101,19 @@ console.log('ok   checked all presets in a link');
   report(same(parseLink(hash).tile.outline, outline) && parseLink(hash).tile.neighbourhood === 1, 'a deformed tile survives a link');
 }
 {
+  // Penrose has one shape, and its own codes for what a cell's orientation is.
+  const penrose = { family: 'penrose', preset: 'Rhombs', outline: quad.outline, neighbourhood: 1, morph: 60 };
+  const cells = [16, 3, -1, 0, 2, 9, 1, 1, 0, 0];
+  const { hash } = await buildLink({ settings: { ...settings, tile: penrose }, recipe: null, generation: 5, population: 2, cells: null, hatCells: cells });
+  const back = parseLink(hash);
+  report(same(back.tile, penrose) && back.problems.length === 0, `a Penrose link keeps its tile: ${hash}`);
+  report(same(Array.from(back.hatCells), cells), 'a Penrose link keeps its cells');
+  report(parseLink('#v=1&f=penrose&h=10,0,0,0,0').problems.includes('cells'), 'a rhomb orientation that does not exist is refused');
+  report(parseLink('#v=1&f=hat&m=60&h=16,0,0,0,0').problems.includes('cells'), 'the hat does not take the codes of rhombs');
+  report(parseLink('#v=1&f=penrose&n=2').problems.includes('neighbourhood'), 'Penrose has two neighbourhoods');
+  report(parseLink('#v=1&f=penrose&t=64x64').problems.includes('torus size'), 'Penrose cannot be a torus');
+}
+{
   const recipe = { kind: 'grid', x: -30, y: 4, width: 200, height: 100, density: 0.3, seed: 4000000000 };
   const fresh = await buildLink({ settings, recipe, generation: 0, population: 6000, cells: null });
   report(fresh.content === 'exact' && same(parseLink(fresh.hash).recipe, recipe), 'a fresh random field goes by its recipe');

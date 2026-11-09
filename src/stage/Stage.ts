@@ -1,9 +1,10 @@
 import { HatScene } from '../render/HatScene';
+import { PenroseScene } from '../render/PenroseScene';
 import { brushReach, Renderer } from '../render/renderer';
 import type { RangeRule } from '../patterns/rule';
 import type { Camera, Recipe } from '../share/link';
 import type { Shape } from '../patterns/rle';
-import type { FromWorker, Stats, ToWorker, TorusSize } from '../sim/protocol';
+import type { FromWorker, Stats, ToWorker, TorusSize, Graph } from '../sim/protocol';
 import { gridToWorld, locate, worldToGrid, type Tiling } from '../tiles/tiles';
 
 export type Tool = 'brush' | 'eraser' | 'hand' | 'stamp';
@@ -74,10 +75,11 @@ export class Stage {
   /** The size the saved torus camera belongs to. */
   private lastTorus: TorusSize | null = null;
   private savedCamera: { plane?: SavedCamera; torus?: SavedCamera } = {};
-  private origins: Record<'plane' | 'torus' | 'hat', FieldOrigin> = {
+  private origins: Record<'plane' | 'torus' | Graph, FieldOrigin> = {
     plane: { pristine: true, recipe: null },
     torus: { pristine: true, recipe: null },
     hat: { pristine: true, recipe: null },
+    penrose: { pristine: true, recipe: null },
   };
   private nextExport = 0;
   private exports = new Map<number, (m: Extract<FromWorker, { t: 'cells' }>) => void>();
@@ -88,12 +90,12 @@ export class Stage {
   private donutPitch = -1;
   private donutZoom = 1;
 
-  /** Set while the hat tiling is showing; `hat` exists once the worker built it. */
-  private hatMode = false;
-  private hat: HatScene | null = null;
+  /** The tiling without a lattice that is showing, if any. Its scene exists once the worker built it. */
+  private graph: Graph | null = null;
+  private scenes: { hat: HatScene | null; penrose: PenroseScene | null } = { hat: null, penrose: null };
   private pendingMorph = 60;
-  /** Lattice position of the screen centre, which stays put during a morph. */
-  private hatCenter: [number, number] = [0, 0];
+  /** Lattice position of the screen centre for each, which stays put during a morph. */
+  private centers: Record<Graph, [number, number]> = { hat: [0, 0], penrose: [0, 0] };
   private hatHover: number | null = null;
   private hatSeed: [number, number] | null = null;
   private lastHatPoint: Point | null = null;
@@ -180,10 +182,26 @@ export class Stage {
     this.frameDirty = true;
   }
 
-  /** Picks the hat tiling, the plane or a torus. Call `setTiling` afterwards for the latter two. */
-  setSurface(hat: boolean, torus: TorusSize | null) {
-    const next = hat ? null : torus;
-    const sameField = hat === this.hatMode && next?.width === this.torus?.width && next?.height === this.torus?.height;
+  private get hatMode() {
+    return this.graph !== null;
+  }
+
+  private get hat() {
+    return this.graph && this.scenes[this.graph];
+  }
+
+  private get hatCenter() {
+    return this.centers[this.graph ?? 'hat'];
+  }
+
+  private set hatCenter(center: [number, number]) {
+    this.centers[this.graph ?? 'hat'] = center;
+  }
+
+  /** Picks a tiling without a lattice, the plane or a torus. Call `setTiling` afterwards for the latter two. */
+  setSurface(graph: Graph | null, torus: TorusSize | null) {
+    const next = graph ? null : torus;
+    const sameField = graph === this.graph && next?.width === this.torus?.width && next?.height === this.torus?.height;
     if (sameField) return;
     const resized = next !== null && (next.width !== this.lastTorus?.width || next.height !== this.lastTorus?.height);
 
@@ -192,7 +210,7 @@ export class Stage {
     if (resized) this.origins.torus.recipe = null;
     if (next && resized) {
       this.fitPending = true;
-    } else if (!hat) {
+    } else if (!graph) {
       const saved = this.savedCamera[next ? 'torus' : 'plane'];
       if (saved) {
         this.centerX = saved.x;
@@ -200,13 +218,13 @@ export class Stage {
         this.cellSize = saved.size;
       }
     }
-    this.hatMode = hat;
+    this.graph = graph;
     this.torus = next;
     if (next) this.lastTorus = next;
     // Each field has its own topology and rule, which the caller sends next.
     this.topology = -1;
     this.renderer.resetTrail();
-    this.send({ t: 'surface', hat, torus: next });
+    this.send({ t: 'surface', graph, torus: next });
     this.viewChanged();
   }
 
@@ -236,7 +254,7 @@ export class Stage {
 
   setMorph(degrees: number) {
     this.pendingMorph = degrees;
-    this.hat?.setMorph(degrees);
+    this.scenes.hat?.setMorph(degrees);
     this.viewChanged();
   }
 
@@ -345,7 +363,7 @@ export class Stage {
   }
 
   private get origin() {
-    return this.origins[this.hatMode ? 'hat' : this.torus ? 'torus' : 'plane'];
+    return this.origins[this.graph ?? (this.torus ? 'torus' : 'plane')];
   }
 
   // Worker
@@ -370,13 +388,17 @@ export class Stage {
       return;
     }
     if (m.t === 'hatReady') {
-      this.hat = new HatScene(this.renderer.gl, m.outline, m.ratio);
-      this.hat.setMorph(this.pendingMorph);
+      if (m.graph === 'hat') {
+        this.scenes.hat = new HatScene(this.renderer.gl, m.outline, m.ratio);
+        this.scenes.hat.setMorph(this.pendingMorph);
+      } else {
+        this.scenes.penrose = new PenroseScene(this.renderer.gl);
+      }
       this.viewChanged();
       return;
     }
     if (m.t === 'hatCells') {
-      this.hat?.append(m.cells);
+      this.scenes[m.graph]?.append(m.cells);
       if (m.capped !== this.capped) {
         this.capped = m.capped;
         this.onCapped(m.capped);

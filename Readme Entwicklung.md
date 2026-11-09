@@ -1,6 +1,6 @@
 # Game of Emergence: Entwicklung
 
-Stand: 9. November 2026, nach Schritt 4 von ursprünglich 5, ergänzt um den Hat-Glider, den Torus, das Teilen per Link, den 3D-Donut, den Suchmodus und die Fünfecke.
+Stand: 9. November 2026, nach Schritt 4 von ursprünglich 5, ergänzt um den Hat-Glider, den Torus, das Teilen per Link, den 3D-Donut, den Suchmodus, die Fünfecke und Penrose.
 
 Dieses Dokument hält fest, was gebaut wurde, warum es so gebaut ist und was als Nächstes ansteht. Installation und Bedienung stehen in der [Readme.md](Readme.md).
 
@@ -24,14 +24,16 @@ Rust/WASM-Engine (engine/src/)
 | `engine/src/life.rs` | Chunk-Engine für alle periodischen Gitter |
 | `engine/src/status.rs` | Statuserkennung |
 | `engine/src/hat.rs` | Hierarchie der Hat-Kachelung, exakte Koordinaten |
-| `engine/src/hat_world.rs` | Simulation auf dem Hat-Graphen, stückweise Erzeugung |
+| `engine/src/graph_world.rs` | Simulation auf einem Graphen, stückweise Erzeugung, für alle Kachelungen ohne Gitter |
+| `engine/src/hat_world.rs` | Der Hat als solche Kachelung |
+| `engine/src/penrose.rs` | Penrose-Rauten als solche Kachelung, exakte Koordinaten |
 | `engine/src/lib.rs` | C-ABI-Exporte für den Worker |
 | `engine/src/search.rs`, `engine/src/bin/search.rs` | Suchmodus für travelling patterns: Kern und Kommandozeile |
 | `src/sim/worker.ts`, `protocol.ts` | Simulationsschleife, Nachrichten zwischen Stage und Worker |
 | `src/tiles/tiles.ts` | Periodische Kachelungen, Vorlagen, Regelvorschläge |
 | `src/tiles/pentagons.json`, `engine/src/pentagons.rs` | Die 15 Fünfeck-Kachelungen und ihre Nachbartabellen, beide erzeugt |
 | `src/render/renderer.ts` | Periodisches Feld, 3D-Donut und Nachglühen |
-| `src/render/HatScene.ts` | Hat-Kacheln als Instanzen, Zellsuche |
+| `src/render/GraphScene.ts`, `HatScene.ts`, `PenroseScene.ts` | Kacheln ohne Gitter als Instanzen, Zellsuche |
 | `src/patterns/` | Musterbibliothek als JSON, RLE lesen und schreiben, Regeln als Text |
 | `src/share/link.ts` | Feldzustand als URL-Fragment, Prüfung eingehender Links |
 | `scripts/` | WASM-Build, Benchmark, Prüfskripte |
@@ -77,6 +79,10 @@ Kommandozeilen-Suche nach Glidern mit reinen B/S-Regeln auf dem Hat, dazu Regeln
 ### Nachtrag: Fünfecke
 
 Alle 15 bekannten Typen konvexer Fünfecke als feste Kacheln, siehe „Fünfecke“.
+
+### Nachtrag: Penrose
+
+Die Rauten von Penrose (P3) als zweite aperiodische Kachelung, siehe „Penrose“.
 
 ## Designentscheidungen
 
@@ -153,7 +159,25 @@ npm run wasm && node scripts/pentagon-rules.mjs   # Regelvorschläge
 
 **Status:** Ein Muster gilt nur als dasselbe, wenn es sich um ganze Perioden verschiebt (`keeps_shape`). Alles andere bleibt „Evolving“, auch wenn es wandert.
 
-**Regelvorschläge:** Suchlauf über Geburt mit 1 oder 2 Werten aus 2–6 und Überleben mit bis zu 3 Werten aus den ersten 6, auf einem Torus 72×72 mit 3 Startwerten. Eine Regel kommt in die Liste, wenn sie weder ausstirbt noch das Feld flutet und ihre Population in den letzten 80 von 360 Generationen in mindestens 15 verschiedenen Werten schwankt. Regeln ohne Überleben stehen hinten, weil ein Feld dort nur Rauschen zeigt. Die Vorschläge sind damit lebendig, aber nicht als beste belegt. Das Ausprobieren auf der Ebene steht aus.
+**Regelvorschläge:** Suchlauf über Geburt mit 1 oder 2 Werten aus 2–6 und Überleben mit bis zu 3 Werten aus den ersten 6, auf einem Torus 72×72 mit 3 Startwerten. Eine Regel kommt in die Liste, wenn sie weder ausstirbt noch das Feld flutet und ihre Population in den letzten 80 von 360 Generationen in mindestens 15 verschiedenen Werten schwankt. Regeln ohne Überleben stehen hinten, weil ein Feld dort nur Rauschen zeigt. Die Vorschläge sind damit auf dem Torus lebendig, aber nicht als beste belegt. Auf der Ebene halten sie oft nicht, siehe „Bekannte Lücken“.
+
+### Penrose
+
+**Gemeinsamer Kern:** Die Simulation auf dem Graphen ist von der Kachelung getrennt. `CellWorld<T: Tiling>` in `graph_world.rs` kennt Zustände, Nachbarn, Regeln, Tabellen und stückweise Erzeugung. `HatWorld` ist `CellWorld<HatTiling>`, das Verhalten des Hats blieb dabei gleich, und die Tests zu Hat und Suchmodus liefen beim Umbau unverändert durch. Die C-Funktionen heißen weiter `hat_*` und gehen über ein Enum an beide Welten.
+
+**Konstruktion:** Robinson-Dreiecke, von einem Rad aus zehn Dreiecken durch 34 Teilungen bis zu Rauten der Kantenlänge 1. Die Regeln sind die verbreitete Teilung nach Robinson, zur Absicherung siehe unten. Eine Raute sind zwei gespiegelte Dreiecke, ihre vierte Ecke ist einfach B + C − A. Die fertigen Stücke umfassen vier Teilungen.
+
+**Exakte Koordinaten:** Alle Kanten zeigen in Richtungen der zehnten Einheitswurzeln, jede Ecke ist also eine ganzzahlige Kombination von 1, z, z² und z³ mit z = e^(2πi/5). Durch den goldenen Schnitt teilen heißt mit z + z⁴ malnehmen, es bleibt also ganzzahlig, ohne Rundung wie beim Hat. Für die Ecke genügen 16 Bit je Anteil: Ecken einer Kachelung liegen in der anderen Einbettung dieser Zahlen in einem beschränkten Fenster, also müssten zwei Ecken mit gleichen Anteilen modulo 2¹⁶ weiter auseinanderliegen, als das Feld breit ist. Ein Test prüft das auch weit draußen.
+
+**Zellen im Link:** Wie beim Hat fünf Zahlen, `turn + 16 * thick` und die vier Anteile. Der Hat nimmt andere Codes an als Penrose, `parseLink` prüft das je Kachelung.
+
+**Absicherung:** Die Tests prüfen Eigenschaften, die die Konstruktion nicht direkt verlangt. Flächen füllen eine Scheibe von Radius 100 bis auf 1 %, dicke und dünne Rauten stehen im goldenen Schnitt, jede Raute hat 4 Kantennachbarn, und Ecken haben 3 bis 7 Kacheln. Mit Ecken sind es 7 bis 11 Nachbarn (gemessen bis Radius 380). Die Zahl passt in die 16 Bit einer Regel. Das Erzeugen bei Bedarf ändert nichts gegenüber einem von Anfang an erzeugten Feld.
+
+**Rendering:** `PenroseScene` nutzt wie der Hat ganzzahlige Instanzen. Für die Genauigkeit gehen Positionen relativ zu einer Zelle nahe der Kamera in den Shader. Es muss eine echte Zelle sein, weil erst deren Anteile nahe an denen auf dem Bild liegen: Ein anderer Punkt gleicher Position kann weit entfernte Anteile haben, die sich dann in Floats auslöschen müssten. In Headless-Chrome war das Bild bei einer Position rund 1,1 Mio. Einheiten vom Ursprung scharf, und Klicks trafen die richtige Raute.
+
+**Regelvorschläge:** `scripts/penrose-rules.mjs` prüft Geburt mit 1 oder 2 Werten aus 2–6 und Überleben mit 1 bis 3 Werten aus den ersten 7, je 800 Generationen auf 3 Zufallsfeldern. Eine Regel darf die Startpopulation höchstens verfünffachen und in der zweiten Hälfte des Laufs nicht mehr als um die Hälfte zulegen. Eine erste Fassung erlaubte das 40-Fache und schlug `B3/S124` vor, die das unbegrenzte Feld im Browser in rund 550 Generationen von rund 1.300 auf 16.000 Zellen brachte. Mit Ecken bleiben 6 Regeln, nur über Kanten 10. Die Vorschläge sind damit lebendig, aber nicht als beste belegt.
+
+**Build:** `over_phi` darf nicht inline werden. Sonst hält die feste Schleife in `PenroseTiling::new` den Optimierer von rustc viele Minuten auf, in einem Lauf über eine Viertelstunde.
 
 ### Torus
 
@@ -348,7 +372,7 @@ Die Engine-Tests laufen nativ, `npm test` installiert das Target `x86_64-unknown
 
 Letzter Stand: alle grün.
 
-- **81 Engine-Tests:** unter anderem Vergleich mit naiven Referenzen auf allen Gittern, alle 30 Fünfeck-Tabellen eingeschlossen, auch auf dem Torus mit Seiten, die kein Vielfaches von 64 sind, und mit B0, Überlappungsfreiheit und Passgenauigkeit der Hats, Flächenfaktor φ⁴ pro Ebene, langfristige Gültigkeit gemeldeter Zustände.
+- **93 Engine-Tests:** unter anderem Vergleich mit naiven Referenzen auf allen Gittern, alle 30 Fünfeck-Tabellen eingeschlossen, auch auf dem Torus mit Seiten, die kein Vielfaches von 64 sind, und mit B0, Überlappungsfreiheit und Passgenauigkeit der Hats, Flächenfaktor φ⁴ pro Ebene, langfristige Gültigkeit gemeldeter Zustände.
 - **`check-patterns.mjs`:** Simuliert alle 24 Muster und prüft Periode, Verschiebung und Wachstum. R-Pentomino und Acorn erreichen ihre aus der Literatur bekannten Endpopulationen 116 und 633.
 - **`check-tiles.mjs`:** Liest die Nachbarn geometrisch aus den Polygonen ab und vergleicht das Ergebnis einer davon gesteuerten naiven Simulation mit der Engine. Prüft außerdem für alle Vorlagen, dass die Kacheln an der Naht eines Torus passen. Bei den Fünfecken prüft es dazu die Bedingungen des Typs, Konvexität, Lücken, Überlappungen und ob alle Kacheln deckungsgleich sind.
 - **`check-hat-glider.mjs`:** Fliegt Glider A von 11 Startkacheln und vergleicht Population, Richtung und Tempo mit dem Paper. Prüft außerdem als reines WASM ein großes Feld, Zellen nach Position und eine Regel auf 2 Ringen.
@@ -361,18 +385,20 @@ Die Browsertests liefen mit Playwright und liegen nicht im Repository. Der Suchm
 
 - **Fünfecke, nah herangezoomt:** Eine Periode von Typ 15 enthält 12 Fünfecke auf derselben Nachschlagetextur von 512×512 Texeln, die Kanten sehen bei starker Vergrößerung deshalb treppig aus. Eine größere Textur kostet bei jedem Ziehen einer Ecke mehr, das wurde noch nicht gemessen.
 - **Fünfecke, Torus:** Die Naht verläuft bei langen, schrägen Perioden diagonal durch die Kacheln. Das betrifft wie bei den anderen schrägen Formen nur die Anzeige.
+- **Fünfecke, Regelvorschläge auf der Ebene:** Sie stammen aus einer Suche auf einem Torus 72×72 und halten auf dem unbegrenzten Feld oft nicht. Gemessen über 2.000 Generationen aus einem Zufallsfeld: Bei den Standardregeln mit Ecken (Typ 4, 6, 7, 8, 13) und nur über Kanten (Typ 8, 10, 13) wächst die Population stark oder explodiert, bei vielen anderen stirbt sie fast aus. Die Suche sollte auf der Ebene wiederholt werden, mit den Kriterien von `penrose-rules.mjs`.
 - **Fünfecke, Formen:** Pro Typ gibt es nur ein festes Beispiel, kein Muster und kein RLE. Beim Typwechsel gilt wieder die erste vorgeschlagene Regel.
 
 - **Nur im Headless-Chrome mit Software-Rendering getestet.** Eine echte GPU, Firefox, Safari und Touch-Gesten sind ungeprüft. Im Headless-Browser lag die Anzeige bei rund 17 Bildern pro Sekunde und damit etwa 300 ms hinterher. Auf echter Hardware ist das noch nicht gemessen.
 - **Zell-Limit im Browser ungetestet.** Geprüft ist die Logik mit niedrigem Limit. Ein Lauf am vollen Limit stürzte in Node ab, die Ursache ist nicht abschließend geklärt. Ein Glider erzeugt rund 30 neue Zellen pro Generation, erreicht das Limit im Dauerlauf also nach einiger Zeit und endet dort.
 - **Die Kamera folgt einem Glider nicht.** Bei hohem Tempo fliegt er schnell aus dem Bild.
-- **Speicher wird nicht freigegeben.** Erzeugte Hat-Zellen bleiben bis zum Neuladen, auch wenn dort nichts mehr lebt.
-- **Weit herausgezoomt** wird beim Hat ab einem Sichtradius von 700 Rastereinheiten nichts Neues erzeugt.
+- **Speicher wird nicht freigegeben.** Erzeugte Zellen von Hat und Penrose bleiben bis zum Neuladen, auch wenn dort nichts mehr lebt.
+- **Weit herausgezoomt** wird beim Hat ab einem Sichtradius von 700 Rastereinheiten nichts Neues erzeugt, bei Penrose ab 250, weil Rauten kleiner sind.
+- **Penrose:** Keine Muster, keine Glider, keine Regeln auf mehreren Ringen in der Oberfläche und kein Suchmodus. Drachen und Pfeile (P2) fehlen.
 - **Auto-Pause läuft nach.** Bei Maximaltempo hält die Simulation einige Tausend Generationen zu spät an, weil die Oberfläche den Status nur mit der Bildrate erfährt. Am Ergebnis ändert das nichts, aber Glider sind dann schon aus dem Bild.
 - **Formwechsel deutet Zellen um.** Beim Wechsel von Familie oder Nachbarschaft bleiben die Zellen stehen und bedeuten auf dem neuen Gitter etwas anderes.
 - **Hat-Zellen im Link:** Platzierte Glider mit Zuständen gehen nicht in einen Link, nur Einstellungen und Pattern-Tabelle. Die Seite weist darauf hin.
 - **Regeln auf mehreren Ringen** lassen sich nur per Link oder Fund-Datei öffnen, nicht im Rule-Panel einstellen.
-- **Der Suchmodus** kennt nur die Hat-Kachelung, keinen chiralen Spectre.
+- **Der Suchmodus** kennt nur die Hat-Kachelung, keinen chiralen Spectre und kein Penrose.
 - **Link kennt die Generation nicht.** Der Zählerstand beginnt beim Öffnen wieder bei 0, und bei der Rückfallstufe „Start des Laufs“ ist der Fortschritt verloren.
 - **RLE** nur für Vierecke mit 8 Nachbarn. Andere Programme würden Muster auf anderen Gittern ohnehin anders deuten.
 - **Musterbibliothek** nur für Vierecke mit 8 Nachbarn, dazu ein Glider auf dem Hat.
@@ -390,6 +416,7 @@ Die Browsertests liefen mit Playwright und liegen nicht im Repository. Der Suchm
 3. **Test auf echter Hardware.** GPU, Firefox, Safari und Touch, wie unter „Bekannte Lücken“ beschrieben.
 4. **Deployment** auf den eigenen Ubuntu-Server bei Hetzner (CX22). Die Seite ist statisch, der Server muss `.wasm` als `application/wasm` ausliefern. COOP/COEP-Header werden erst nötig, falls später WASM-Threads dazukommen. Erst danach funktionieren geteilte Links auch für andere. Der Server sollte HTTPS nutzen, sonst steht das automatische Kopieren in die Zwischenablage nicht zur Verfügung.
 5. **Mögliche Erweiterungen, noch nicht entschieden:**
+   - Penrose weiter ausbauen: Glider aus monotile-ca übernehmen, sofern die Rechte passen, den Suchmodus darauf anwenden, Drachen und Pfeile (P2)
    - Fünfecke verformbar machen, wo sich ein Typ dafür eignet (bei Typ 4 ist die Form allein durch die Lage eines Eckpunkts bestimmt)
    - echter chiraler Spectre mit eigener Substitution
    - Muster für Hexagone und Dreiecke suchen
@@ -398,6 +425,6 @@ Die Browsertests liefen mit Playwright und liegen nicht im Repository. Der Suchm
 
 ## Organisatorisches
 
-- **Git:** Lokales Repository ohne Remote. `src/sim/engine.wasm` und `engine/target` sind ausgeschlossen, der Build erzeugt sie.
+- **Git:** Repository mit Remote `origin`. `src/sim/engine.wasm` und `engine/target` sind ausgeschlossen, der Build erzeugt sie.
 - **Nextcloud:** `node_modules` und `dist` stehen in der globalen Ausschlussliste, `target` noch nicht. Ein Eintrag dort gilt für alle Ordner dieses Namens im Sync. `engine/target` sollte also vor dem nächsten Sync ausgeschlossen oder anders gelöst werden.
 - **Lizenz:** Für das Projekt selbst noch nicht festgelegt.

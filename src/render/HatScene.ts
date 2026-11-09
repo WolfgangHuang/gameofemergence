@@ -1,10 +1,8 @@
+import { compile, FIELDS_PER_CELL, GraphScene, type Vec } from './GraphScene';
 import type { Renderer } from './renderer';
 
 const HR3 = Math.sqrt(3) / 2;
 const SQRT3 = Math.sqrt(3);
-const BATCH = 8192;
-const BUCKET = 3;
-export const FIELDS_PER_CELL = 5;
 
 const VERTEX = /* glsl */ `#version 300 es
 precision highp float;
@@ -54,7 +52,7 @@ void main() {
   v_hovered = u_brush >= 0.0 && (id == u_hover || dot(centre, centre) <= u_brush) ? 1.0 : 0.0;
 }`;
 
-const FILL = /* glsl */ `#version 300 es
+export const CELL_FILL = /* glsl */ `#version 300 es
 precision highp float;
 flat in float v_live;
 flat in float v_glow;
@@ -69,7 +67,7 @@ void main() {
   color = vec4(mix(c, INK, v_live), 1.0);
 }`;
 
-const LINE = /* glsl */ `#version 300 es
+export const CELL_LINE = /* glsl */ `#version 300 es
 precision highp float;
 flat in float v_live;
 uniform float u_grid;
@@ -79,32 +77,6 @@ void main() {
   // Fainter over live cells, where a full line would break them apart.
   color = vec4(LINE, u_grid * (v_live > 0.5 ? 0.35 : 1.0));
 }`;
-
-function compile(gl: WebGL2RenderingContext, vertex: string, fragment: string) {
-  const program = gl.createProgram()!;
-  for (const [type, source] of [
-    [gl.VERTEX_SHADER, vertex],
-    [gl.FRAGMENT_SHADER, fragment],
-  ] as const) {
-    const shader = gl.createShader(type)!;
-    gl.shaderSource(shader, source);
-    gl.compileShader(shader);
-    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(shader) ?? 'shader');
-    gl.attachShader(program, shader);
-  }
-  gl.linkProgram(program);
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program) ?? 'program');
-  const uniforms = new Map<string, WebGLUniformLocation | null>();
-  return {
-    program,
-    uniform(name: string) {
-      if (!uniforms.has(name)) uniforms.set(name, gl.getUniformLocation(program, name));
-      return uniforms.get(name)!;
-    },
-  };
-}
-
-type Vec = [number, number];
 
 const hex = (q: number, r: number): Vec => [q + 0.5 * r, HR3 * r];
 
@@ -141,22 +113,14 @@ export function earClip(points: Vec[]): number[] {
 }
 
 /** The hat tiling on screen: positions, drawing and finding cells. */
-export class HatScene {
-  private gl: WebGL2RenderingContext;
+export class HatScene extends GraphScene {
   private fill;
   private line;
   private vao: WebGLVertexArrayObject;
   private fillVertices: WebGLBuffer;
   private lineVertices: WebGLBuffer;
-  private instances: WebGLBuffer;
   private fillCount = 0;
   private lineCount = 0;
-
-  /** Rotation + 8 * flip, then p.q, p.r, q.q, q.r per cell. */
-  private cells = new Int32Array(FIELDS_PER_CELL * 4096);
-  count = 0;
-  private uploaded = 0;
-  private capacity = 0;
 
   private partA: Vec[] = [];
   private partB: Vec[] = [];
@@ -166,28 +130,21 @@ export class HatScene {
   b = SQRT3;
   /** World units per lattice unit of the hat's own shape. */
   size = 1;
-  /** Long distances: world position = stretch * lattice position, as complex numbers. */
-  stretch: Vec = [1, 0];
   private local: Vec[] = [];
   private centroid: Vec = [0, 0];
 
-  private buckets = new Map<string, number[]>();
-  private indexed = 0;
-  private batches: { first: number; count: number; x: number; y: number; radius: number }[] = [];
-
   constructor(gl: WebGL2RenderingContext, outline: Int32Array, ratio: Vec) {
-    this.gl = gl;
+    super(gl);
     this.ratio = ratio;
     for (let i = 0; i < 14; i++) {
       this.partA.push(hex(outline[i * 4], outline[i * 4 + 1]));
       this.partB.push(hex(outline[i * 4 + 2], outline[i * 4 + 3]));
     }
-    this.fill = compile(gl, VERTEX, FILL);
-    this.line = compile(gl, VERTEX, LINE);
+    this.fill = compile(gl, VERTEX, CELL_FILL);
+    this.line = compile(gl, VERTEX, CELL_LINE);
     this.vao = gl.createVertexArray()!;
     this.fillVertices = gl.createBuffer()!;
     this.lineVertices = gl.createBuffer()!;
-    this.instances = gl.createBuffer()!;
     this.setMorph(60);
   }
 
@@ -225,10 +182,7 @@ export class HatScene {
     this.stretch = [(size * (nr * dr + ni * di)) / norm, (size * (ni * dr - nr * di)) / norm];
 
     this.updateMesh();
-    // Everything has moved, so the index starts over.
-    this.buckets.clear();
-    this.indexed = 0;
-    this.batches = [];
+    this.resetIndex();
   }
 
   get morph() {
@@ -246,36 +200,6 @@ export class HatScene {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.lineVertices);
     gl.bufferData(gl.ARRAY_BUFFER, Int32Array.from(lines), gl.STATIC_DRAW);
     this.lineCount = lines.length;
-  }
-
-  append(data: Int32Array) {
-    const needed = this.count * FIELDS_PER_CELL + data.length;
-    if (needed > this.cells.length) {
-      const grown = new Int32Array(Math.max(needed, this.cells.length * 2));
-      grown.set(this.cells.subarray(0, this.count * FIELDS_PER_CELL));
-      this.cells = grown;
-    }
-    this.cells.set(data, this.count * FIELDS_PER_CELL);
-    this.count += data.length / FIELDS_PER_CELL;
-  }
-
-  private syncInstances() {
-    if (this.uploaded === this.count) return;
-    const { gl } = this;
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.instances);
-    if (this.count > this.capacity) {
-      this.capacity = Math.max(this.count, this.capacity * 2, 4096);
-      gl.bufferData(gl.ARRAY_BUFFER, this.capacity * FIELDS_PER_CELL * 4, gl.DYNAMIC_DRAW);
-      this.uploaded = 0;
-    }
-    gl.bufferSubData(
-      gl.ARRAY_BUFFER,
-      this.uploaded * FIELDS_PER_CELL * 4,
-      this.cells,
-      this.uploaded * FIELDS_PER_CELL,
-      (this.count - this.uploaded) * FIELDS_PER_CELL,
-    );
-    this.uploaded = this.count;
   }
 
   /** World position of the cell's anchor, without any camera. */
@@ -297,39 +221,13 @@ export class HatScene {
     return [c * x - s * my, s * x + c * my];
   }
 
-  centerOf(id: number): Vec {
+  override centerOf(id: number): Vec {
     const [ax, ay] = this.anchor(id);
     const [cx, cy] = this.orient(id, this.centroid);
     return [ax + cx, ay + cy];
   }
 
-  private updateIndex() {
-    for (let id = this.indexed; id < this.count; id++) {
-      const [x, y] = this.centerOf(id);
-      const key = `${Math.floor(x / BUCKET)},${Math.floor(y / BUCKET)}`;
-      const list = this.buckets.get(key);
-      if (list) list.push(id);
-      else this.buckets.set(key, [id]);
-    }
-    this.indexed = this.count;
-    // Batches let drawing skip whatever is off screen. Their extent is measured
-    // from the cells, as generation can place neighbouring ids far apart.
-    this.batches = [];
-    for (let first = 0; first < this.count; first += BATCH) {
-      const count = Math.min(BATCH, this.count - first);
-      let [minX, minY, maxX, maxY] = [Infinity, Infinity, -Infinity, -Infinity];
-      for (let id = first; id < first + count; id++) {
-        const [x, y] = this.centerOf(id);
-        minX = Math.min(minX, x);
-        maxX = Math.max(maxX, x);
-        minY = Math.min(minY, y);
-        maxY = Math.max(maxY, y);
-      }
-      this.batches.push({ first, count, x: (minX + maxX) / 2, y: (minY + maxY) / 2, radius: Math.hypot(maxX - minX, maxY - minY) / 2 + 4 });
-    }
-  }
-
-  private containsPoint(id: number, x: number, y: number) {
+  protected containsPoint(id: number, x: number, y: number) {
     const [ax, ay] = this.anchor(id);
     let inside = false;
     let [px, py] = this.orient(id, this.local[13]);
@@ -344,49 +242,6 @@ export class HatScene {
       py = qy;
     }
     return inside;
-  }
-
-  /** The cell under a world position, if that part of the field is generated. */
-  locate(x: number, y: number): number | null {
-    this.updateIndex();
-    const [bx, by] = [Math.floor(x / BUCKET), Math.floor(y / BUCKET)];
-    for (let dy = -2; dy <= 2; dy++) {
-      for (let dx = -2; dx <= 2; dx++) {
-        for (const id of this.buckets.get(`${bx + dx},${by + dy}`) ?? []) {
-          if (this.containsPoint(id, x, y)) return id;
-        }
-      }
-    }
-    return null;
-  }
-
-  /** Cells whose centres lie within a distance. */
-  around(x: number, y: number, squared: number): number[] {
-    this.updateIndex();
-    const reach = Math.ceil(Math.sqrt(squared) / BUCKET) + 1;
-    const [bx, by] = [Math.floor(x / BUCKET), Math.floor(y / BUCKET)];
-    const found: number[] = [];
-    for (let dy = -reach; dy <= reach; dy++) {
-      for (let dx = -reach; dx <= reach; dx++) {
-        for (const id of this.buckets.get(`${bx + dx},${by + dy}`) ?? []) {
-          const [cx, cy] = this.centerOf(id);
-          if ((cx - x) ** 2 + (cy - y) ** 2 <= squared) found.push(id);
-        }
-      }
-    }
-    return found;
-  }
-
-  /** Converts between world and lattice positions over long distances. */
-  worldOf(lattice: Vec): Vec {
-    const [sr, si] = this.stretch;
-    return [sr * lattice[0] - si * lattice[1], sr * lattice[1] + si * lattice[0]];
-  }
-
-  latticeOf(world: Vec): Vec {
-    const [sr, si] = this.stretch;
-    const norm = sr * sr + si * si;
-    return [(sr * world[0] + si * world[1]) / norm, (sr * world[1] - si * world[0]) / norm];
   }
 
   draw(renderer: Renderer, center: Vec, scale: number, hover: { id: number; reach: number } | null) {

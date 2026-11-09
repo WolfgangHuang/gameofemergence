@@ -1,8 +1,8 @@
 import { useRef, useState } from 'react';
-import { area, buildTiling, countLabel, FAMILIES, fullOutline, HAT_NEIGHBOURHOODS, HAT_SHAPES, isValidOutline, neighbourhoodsOf, type Family, type Vec } from '../tiles/tiles';
+import { area, buildTiling, countLabel, FAMILIES, fullOutline, HAT_NEIGHBOURHOODS, HAT_SHAPES, isValidOutline, neighbourhoodsOf, PENROSE_NEIGHBOURHOODS, type Family, type Vec } from '../tiles/tiles';
 
 export interface TileState {
-  family: Family | 'hat';
+  family: Family | 'hat' | 'penrose';
   /** Name of the preset, or null once a vertex has been dragged. */
   preset: string | null;
   outline: Vec[];
@@ -12,6 +12,7 @@ export interface TileState {
 }
 
 const HAT_LABEL = 'Einstein';
+const PENROSE_LABEL = 'Penrose';
 
 const VIEW_RADIUS = 2.4;
 
@@ -136,15 +137,36 @@ function HatPanel({ state, onChange }: { state: TileState; onChange: (state: Til
   );
 }
 
+function PenrosePanel({ state, onChange }: { state: TileState; onChange: (state: TileState) => void }) {
+  const label = (n: (typeof PENROSE_NEIGHBOURHOODS)[number]) => `${n.name} (${countLabel(n)})`;
+  return (
+    <>
+      <div>
+        <span className="caption">Neighbours</span>
+        <Chips
+          items={PENROSE_NEIGHBOURHOODS.map(label)}
+          active={label(PENROSE_NEIGHBOURHOODS[state.neighbourhood])}
+          onPick={(picked) => onChange({ ...state, neighbourhood: PENROSE_NEIGHBOURHOODS.findIndex((n) => label(n) === picked) })}
+        />
+      </div>
+      <p className="note">Two rhombs, no repeating pattern, and five-fold order throughout. Thick rhombs outnumber thin ones by the golden ratio. Tiling by Roger Penrose (P3).</p>
+    </>
+  );
+}
+
 export function TilePanel({ state, onChange }: { state: TileState; onChange: (state: TileState) => void }) {
   const families = Object.keys(FAMILIES) as Family[];
   const familyChips = (
     <Chips
-      items={[...families.map((f) => FAMILIES[f].name), HAT_LABEL]}
-      active={state.family === 'hat' ? HAT_LABEL : FAMILIES[state.family].name}
+      items={[...families.map((f) => FAMILIES[f].name), HAT_LABEL, PENROSE_LABEL]}
+      active={state.family === 'hat' ? HAT_LABEL : state.family === 'penrose' ? PENROSE_LABEL : FAMILIES[state.family].name}
       onPick={(name) => {
         if (name === HAT_LABEL) {
           if (state.family !== 'hat') onChange({ ...state, family: 'hat', preset: 'Hat', neighbourhood: 0 });
+          return;
+        }
+        if (name === PENROSE_LABEL) {
+          if (state.family !== 'penrose') onChange({ ...state, family: 'penrose', preset: 'Rhombs', neighbourhood: 0 });
           return;
         }
         const family = families.find((f) => FAMILIES[f].name === name)!;
@@ -159,6 +181,14 @@ export function TilePanel({ state, onChange }: { state: TileState; onChange: (st
       <>
         {familyChips}
         <HatPanel state={state} onChange={onChange} />
+      </>
+    );
+  }
+  if (state.family === 'penrose') {
+    return (
+      <>
+        {familyChips}
+        <PenrosePanel state={state} onChange={onChange} />
       </>
     );
   }

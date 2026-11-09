@@ -13,7 +13,7 @@ import { parseRle, RleError, toRle } from '../patterns/rle.ts';
 import { parseRangeRule, parseRule, rangeRuleName, ruleName, type RangeRule, type Rule } from '../patterns/rule.ts';
 import { HAT_PATTERNS } from '../patterns/hatPatterns.ts';
 import type { TorusSize } from '../sim/protocol.ts';
-import { FAMILIES, fullOutline, HAT_NEIGHBOURHOODS, isValidOutline, isValidTorusSide, neighbourhoodsOf, type Family, type Vec } from '../tiles/tiles.ts';
+import { FAMILIES, fullOutline, HAT_NEIGHBOURHOODS, isValidOutline, isValidTorusSide, neighbourhoodsOf, PENROSE_NEIGHBOURHOODS, type Family, type Vec } from '../tiles/tiles.ts';
 
 const VERSION = '1';
 /** Browsers take far more, but nothing sensible can be done with such a link. */
@@ -44,7 +44,7 @@ export interface Camera {
 }
 
 export interface SharedTile {
-  family: Family | 'hat';
+  family: Family | 'hat' | 'penrose';
   preset: string | null;
   outline: Vec[];
   neighbourhood: number;
@@ -103,7 +103,9 @@ function settingsParts({ tile, rule, table, range, torus, camera }: Settings) {
   const parts = [`v=${VERSION}`];
   if (tile.family !== 'quad') parts.push(`f=${tile.family}`);
   if (tile.family === 'hat') parts.push(`m=${tile.morph}`);
-  else if (tile.preset !== null) parts.push(`p=${encodeURIComponent(tile.preset)}`);
+  else if (tile.family === 'penrose') {
+    // One shape, nothing more to say.
+  } else if (tile.preset !== null) parts.push(`p=${encodeURIComponent(tile.preset)}`);
   else parts.push(`o=${tile.outline.flat().map((v) => round(v, 4)).join(',')}`);
   if (tile.neighbourhood !== 0) parts.push(`n=${tile.neighbourhood}`);
   parts.push(table ? `k=${encodeURIComponent(table)}` : `r=${range ? rangeRuleName(range) : ruleName(rule)}`);
@@ -211,6 +213,12 @@ function parseTile(params: Map<string, string>, problems: string[]): SharedTile 
       morph: Number.isFinite(morph) ? Math.min(84, Math.max(6, Math.round(morph))) : 60,
     };
   }
+  if (name === 'penrose') {
+    const neighbourhood = Number(params.get('n') ?? 0);
+    const validN = Number.isInteger(neighbourhood) && neighbourhood >= 0 && neighbourhood < PENROSE_NEIGHBOURHOODS.length;
+    if (!validN) problems.push('neighbourhood');
+    return { family: 'penrose', preset: 'Rhombs', outline: FAMILIES.quad.presets[0].outline, neighbourhood: validN ? neighbourhood : 0, morph: 60 };
+  }
   if (!Object.hasOwn(FAMILIES, name)) {
     problems.push('tile');
     return null;
@@ -238,6 +246,7 @@ function parseTile(params: Map<string, string>, problems: string[]): SharedTile 
 }
 
 function neighbourCount(tile: SharedTile) {
+  if (tile.family === 'penrose') return PENROSE_NEIGHBOURHOODS[tile.neighbourhood].count;
   return tile.family === 'hat' ? HAT_NEIGHBOURHOODS[tile.neighbourhood].count : neighbourhoodsOf(tile.family, tile.preset)[tile.neighbourhood].count;
 }
 
@@ -265,7 +274,10 @@ function parseRecipe(text: string, hat: boolean, problems: string[]): Recipe | n
 }
 
 /** Keeps a list to what can be a place in the tiling. The engine checks that a hat is there. */
-function parseHatCells(text: string, problems: string[]) {
+/** Orientations that exist: rotation + 8 * flip on the hat, turn + 16 * thick on rhombs. */
+const validCode = (penrose: boolean, v: number) => (penrose ? (v >= 0 && v < 10) || (v >= 16 && v < 26) : (v >= 0 && v < 6) || (v >= 8 && v < 14));
+
+function parseHatCells(text: string, problems: string[], penrose: boolean) {
   const parts = text.split(',');
   const values = parts.map(Number);
   const valid =
@@ -273,7 +285,7 @@ function parseHatCells(text: string, problems: string[]) {
     parts.length % HAT_KEY_FIELDS === 0 &&
     parts.length <= MAX_HAT_LINK_CELLS * HAT_KEY_FIELDS &&
     !parts.includes('') &&
-    values.every((v, i) => Number.isInteger(v) && (i % HAT_KEY_FIELDS === 0 ? (v >= 0 && v < 6) || (v >= 8 && v < 14) : Math.abs(v) <= COORD_LIMIT));
+    values.every((v, i) => Number.isInteger(v) && (i % HAT_KEY_FIELDS === 0 ? validCode(penrose, v) : Math.abs(v) <= COORD_LIMIT));
   if (!valid) {
     problems.push('cells');
     return null;
@@ -316,12 +328,13 @@ export function parseLink(hash: string): ParsedLink | null {
   parsed.tile = parseTile(params, problems);
   const tile: SharedTile = parsed.tile ?? { family: 'quad', preset: 'Square', outline: FAMILIES.quad.presets[0].outline, neighbourhood: 0, morph: 60 };
   const isHat = tile.family === 'hat';
+  const isGraph = isHat || tile.family === 'penrose';
 
   const torus = params.get('t');
   if (torus !== undefined) {
     const match = /^(\d+)x(\d+)$/.exec(torus);
     const size = match && { width: Number(match[1]), height: Number(match[2]) };
-    if (size && isValidTorusSide(size.width) && isValidTorusSide(size.height) && !isHat) parsed.torus = size;
+    if (size && isValidTorusSide(size.width) && isValidTorusSide(size.height) && !isGraph) parsed.torus = size;
     else problems.push('torus size');
   }
 
@@ -355,16 +368,16 @@ export function parseLink(hash: string): ParsedLink | null {
   }
 
   const recipe = params.get('s');
-  if (recipe !== undefined) parsed.recipe = parseRecipe(recipe, isHat, problems);
+  if (recipe !== undefined) parsed.recipe = parseRecipe(recipe, isGraph, problems);
   for (const [key, compressed] of [['a', false], ['z', true]] as const) {
     const cells = params.get(key);
     if (cells === undefined) continue;
-    if (isHat) problems.push('cells');
+    if (isGraph) problems.push('cells');
     else parsed.cells = parseCoded(cells, compressed, problems);
   }
   const hatCells = params.get('h');
   if (hatCells !== undefined) {
-    if (isHat) parsed.hatCells = parseHatCells(hatCells, problems);
+    if (isGraph) parsed.hatCells = parseHatCells(hatCells, problems, !isHat);
     else problems.push('cells');
   }
   return parsed;

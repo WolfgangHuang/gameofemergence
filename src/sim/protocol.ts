@@ -24,7 +24,7 @@ export type ToWorker =
    * Which field the commands below apply to. Each keeps its cells while inactive.
    * `torus` is null on the plane. A new size keeps the cells that still fit.
    */
-  | { t: 'surface'; hat: boolean; torus: TorusSize | null }
+  | { t: 'surface'; graph: Graph | null; torus: TorusSize | null }
   | { t: 'hatEdgesOnly'; edgesOnly: boolean }
   /** A priority table in the layout of `set_table_from_scratch`. */
   | { t: 'hatTable'; rows: Uint32Array }
@@ -48,6 +48,9 @@ export type ToWorker =
   /** Asks for all live cells of the grid field, unless there are more than `max`. */
   | { t: 'exportCells'; id: number; max: number };
 
+/** Tilings without a lattice, which the engine holds as graphs. */
+export type Graph = 'hat' | 'penrose';
+
 export type StatusKind = 'active' | 'empty' | 'still' | 'oscillating' | 'drifting' | 'growing';
 
 export interface Stats {
@@ -64,9 +67,9 @@ export interface Stats {
 
 export type FromWorker =
   | { t: 'ready' }
-  | { t: 'hatReady'; outline: Int32Array; ratio: [number, number] }
+  | { t: 'hatReady'; graph: Graph; outline: Int32Array; ratio: [number, number] }
   /** Newly generated cells, five numbers each. Always sent before their first frame. */
-  | { t: 'hatCells'; cells: Int32Array; capped: boolean }
+  | { t: 'hatCells'; graph: Graph; cells: Int32Array; capped: boolean }
   | ({ t: 'frame'; data: Uint8Array<ArrayBuffer> } & FrameWindow & Stats)
   /** Flat x, y pairs, or null on the hat tiling and above the requested maximum. There, `hatCells` has five numbers per cell. */
   | { t: 'cells'; id: number; cells: Int32Array | null; hatCells: Int32Array | null; generation: number; population: number }

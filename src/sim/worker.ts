@@ -1,5 +1,5 @@
 import wasmUrl from './engine.wasm?url';
-import type { FromWorker, StatusKind, ToWorker } from './protocol';
+import type { FromWorker, StatusKind, ToWorker, Graph } from './protocol';
 
 interface Exports {
   memory: WebAssembly.Memory;
@@ -22,6 +22,7 @@ interface Exports {
   world_status_since(w: number): number;
 
   hat_new(): number;
+  penrose_new(): number;
   hat_set_rule(w: number, birth: number, survive: number): number;
   hat_set_edges_only(w: number, edgesOnly: number): void;
   hat_set_table(w: number, n: number): void;
@@ -54,8 +55,8 @@ const post = (message: FromWorker, transfer: Transferable[] = []) => self.postMe
 
 const SLICE_MS = 10;
 const STATUS_KINDS: StatusKind[] = ['active', 'empty', 'still', 'oscillating', 'drifting', 'growing'];
-/** Beyond this view radius, generating every visible hat would take too long. */
-const MAX_LOAD_RADIUS = 700;
+/** Beyond this view radius, generating every visible cell would take too long. Rhombs are smaller than hats. */
+const MAX_LOAD_RADIUS = { hat: 700, penrose: 250 };
 /** Cell states travel as a texture of this width, in order of their ids. */
 const CELL_TEXTURE_WIDTH = 2048;
 const FIELDS_PER_CELL = 5;
@@ -67,9 +68,11 @@ let torus = 0;
 let torusSize = '';
 /** The grid field being shown, whichever of the two that is. */
 let world = 0;
+/** Each graph once it was asked for, and how many of its cells the page knows. */
+const graphs: Record<Graph, { world: number; sent: number }> = { hat: { world: 0, sent: 0 }, penrose: { world: 0, sent: 0 } };
+let graph: Graph = 'hat';
 let hat = 0;
 let hatActive = false;
-let sentCells = 0;
 let running = false;
 let gps: number | null = 30;
 let scheduled = false;
@@ -140,18 +143,19 @@ function stats() {
 
 function sendNewCells() {
   const count = e.hat_cell_count(hat);
-  if (count === sentCells) return;
-  const ptr = e.hat_cells(hat, sentCells);
-  const cells = new Int32Array(e.memory.buffer, ptr, (count - sentCells) * FIELDS_PER_CELL).slice();
-  sentCells = count;
-  post({ t: 'hatCells', cells, capped: e.hat_capped(hat) !== 0 }, [cells.buffer]);
+  const known = graphs[graph];
+  if (count === known.sent) return;
+  const ptr = e.hat_cells(hat, known.sent);
+  const cells = new Int32Array(e.memory.buffer, ptr, (count - known.sent) * FIELDS_PER_CELL).slice();
+  known.sent = count;
+  post({ t: 'hatCells', graph, cells, capped: e.hat_capped(hat) !== 0 }, [cells.buffer]);
 }
 
 function hatFrame(m: { x: number; y: number; radius: number; spare: ArrayBuffer | null }) {
-  if (m.radius <= MAX_LOAD_RADIUS) e.hat_load(hat, m.x, m.y, m.radius);
+  if (m.radius <= MAX_LOAD_RADIUS[graph]) e.hat_load(hat, m.x, m.y, m.radius);
   sendNewCells();
   const count = e.hat_cell_count(hat);
-  const key = `hat:${version}:${count}`;
+  const key = `${graph}:${version}:${count}`;
   if (key === lastFrameKey) {
     post({ t: 'unchanged', spare: m.spare, ...stats() }, m.spare ? [m.spare] : []);
     return;
@@ -183,18 +187,24 @@ function handle(m: ToWorker) {
       stepOnce();
       break;
     case 'surface':
-      hatActive = m.hat;
+      hatActive = m.graph !== null;
       version++;
       if (m.torus) {
         const size = `${m.torus.width}x${m.torus.height}`;
         if (!torus) torus = e.world_new();
         if (size !== torusSize && e.world_set_torus(torus, m.torus.width, m.torus.height)) torusSize = size;
       }
-      if (!m.hat) world = m.torus ? torus : plane;
-      if (hatActive && !hat) {
-        hat = e.hat_new();
-        const outline = new Int32Array(e.memory.buffer, e.hat_outline(hat), 14 * 4).slice();
-        post({ t: 'hatReady', outline, ratio: [e.hat_ratio_re(hat), e.hat_ratio_im(hat)] }, [outline.buffer]);
+      if (m.graph === null) {
+        world = m.torus ? torus : plane;
+      } else {
+        graph = m.graph;
+        const fresh = !graphs[graph].world;
+        if (fresh) graphs[graph].world = graph === 'hat' ? e.hat_new() : e.penrose_new();
+        hat = graphs[graph].world;
+        if (fresh) {
+          const outline = graph === 'hat' ? new Int32Array(e.memory.buffer, e.hat_outline(hat), 14 * 4).slice() : new Int32Array(0);
+          post({ t: 'hatReady', graph, outline, ratio: [e.hat_ratio_re(hat), e.hat_ratio_im(hat)] }, [outline.buffer]);
+        }
       }
       break;
     case 'hatEdgesOnly':
