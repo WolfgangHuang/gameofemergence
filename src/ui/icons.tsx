@@ -53,6 +53,17 @@ export const SeedIcon = () => (
     <path d="M6 7h.01M12 5h.01M18 8h.01M8 12h.01M15 12h.01M5 17h.01M11 18h.01M18 16h.01" strokeWidth="2.2" />
   </Icon>
 );
+export const SunIcon = () => (
+  <Icon>
+    <circle cx="12" cy="12" r="3.5" />
+    <path d="M12 4v2M12 18v2M4 12h2M18 12h2M6.3 6.3l1.4 1.4M16.3 16.3l1.4 1.4M6.3 17.7l1.4-1.4M16.3 7.7l1.4-1.4" />
+  </Icon>
+);
+export const MoonIcon = () => (
+  <Icon>
+    <path d="M19 14.5A7.5 7.5 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5z" />
+  </Icon>
+);
 export const ClearIcon = () => (
   <Icon>
     <path d="m7 7 10 10M17 7 7 17" />

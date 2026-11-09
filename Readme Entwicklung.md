@@ -371,6 +371,8 @@ Beim Hat ist B25/S3 Standard: rund 5 % Dichte und über 600 Generationen aktiv. 
 
 Weiß, luftig, Haarlinien. Die Panels blenden beim Lauf aus und kommen bei Mausbewegung zurück. Bewusst keine Hintergrundunschärfe, weil sie über einer animierten Fläche viel Leistung kostet. Stattdessen fast deckendes Weiß mit feiner Kontur. Die Schrift ist Inter, lokal eingebunden. Die Oberflächensprache ist Englisch.
 
+Der Dark Mode hängt am Attribut `data-theme` auf `<html>`, das ein kleines Skript in der `index.html` noch vor dem ersten Bild setzt, damit nichts weiß aufblitzt. Die Oberfläche folgt über CSS-Variablen, das Spielfeld über die Uniforms aus `src/render/palette.ts`. Papier und Tinte stehen an beiden Stellen und müssen übereinstimmen. Gespeichert wird nur eine Wahl, die von der Systemeinstellung abweicht. Wer wieder die Einstellung des Systems wählt, folgt ihr also auch wieder.
+
 ## Tests
 
 ```

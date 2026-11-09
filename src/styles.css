@@ -4,11 +4,29 @@
   --hairline: #dde4ec;
   --accent: #4f93dc;
   --notice: #b35900;
+  --paper: #fff;
+  --raised: #fafcfe;
+  --hover: #f2f6fa;
   --surface: rgba(255, 255, 255, 0.96);
   --shadow: 0 18px 50px -20px rgba(40, 70, 110, 0.22);
+  color-scheme: light;
   font-family: 'Inter Variable', system-ui, sans-serif;
   font-weight: 300;
   color: var(--ink);
+}
+
+/* Paper and ink have to match src/render/palette.ts. */
+:root[data-theme='dark'] {
+  --ink: #e4ebf3;
+  --muted: #8a97a8;
+  --hairline: #2c3746;
+  --notice: #e8a05a;
+  --paper: #10161f;
+  --raised: #161d28;
+  --hover: #222c3a;
+  --surface: rgba(24, 32, 44, 0.96);
+  --shadow: 0 18px 50px -20px rgba(0, 0, 0, 0.6);
+  color-scheme: dark;
 }
 
 * {
@@ -21,7 +39,7 @@ body,
   height: 100%;
   margin: 0;
   overflow: hidden;
-  background: #fff;
+  background: var(--paper);
 }
 
 .field {
@@ -172,7 +190,7 @@ body,
   display: block;
   width: 100%;
   border-radius: 10px;
-  background: #fafcfe;
+  background: var(--raised);
   touch-action: none;
 }
 
@@ -191,7 +209,7 @@ body,
 }
 
 .tile-handle {
-  fill: #fff;
+  fill: var(--paper);
   stroke: var(--accent);
   stroke-width: 0.022;
   cursor: grab;
@@ -270,7 +288,7 @@ body,
 }
 
 .pattern:hover {
-  background: #f2f6fa;
+  background: var(--hover);
 }
 
 .pattern.active {
@@ -318,7 +336,7 @@ body,
 
 .check input:checked {
   background: var(--accent);
-  box-shadow: inset 0 0 0 3px #fff;
+  box-shadow: inset 0 0 0 3px var(--paper);
 }
 
 .status {
@@ -398,11 +416,16 @@ input:focus-visible {
   outline-offset: 3px;
 }
 
-.view-toggle {
+.view-controls {
   position: fixed;
   top: 20px;
   left: 50%;
   transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+}
+
+.view-toggle {
   width: 38px;
   height: 38px;
   display: grid;
@@ -438,7 +461,7 @@ input:focus-visible {
 
 .icon:hover {
   color: var(--ink);
-  background: #f2f6fa;
+  background: var(--hover);
 }
 
 .icon.active {
@@ -513,7 +536,7 @@ input[type='range']::-webkit-slider-thumb {
   height: 13px;
   margin-top: -6px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--paper);
   border: 1px solid var(--accent);
 }
 
@@ -521,7 +544,7 @@ input[type='range']::-moz-range-thumb {
   width: 11px;
   height: 11px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--paper);
   border: 1px solid var(--accent);
 }
 
@@ -567,7 +590,7 @@ dd {
 }
 
 @media (max-width: 820px) {
-  .view-toggle {
+  .view-controls {
     left: auto;
     right: 12px;
     top: 12px;
@@ -664,7 +687,7 @@ textarea.text-input {
   padding: 8px 10px;
   border-left: 2px solid var(--notice);
   border-radius: 2px;
-  background: rgba(179, 89, 0, 0.08);
+  background: color-mix(in srgb, var(--notice) 8%, transparent);
   color: var(--notice);
 }
 
@@ -693,12 +716,12 @@ textarea.text-input {
   height: 9px;
   margin-right: 3px;
   border-radius: 2px;
-  box-shadow: inset 0 0 0 1px rgba(25, 38, 54, 0.3);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 30%, transparent);
 }
 
 /* The field's shades: ink over paper at the coverage of each state's cell byte. */
 .swatch-0 {
-  background: #fff;
+  background: var(--paper);
 }
 
 .swatch-1 {
@@ -706,11 +729,11 @@ textarea.text-input {
 }
 
 .swatch-2 {
-  background: color-mix(in srgb, var(--ink) 59%, #fff);
+  background: color-mix(in srgb, var(--ink) 59%, var(--paper));
 }
 
 .swatch-3 {
-  background: color-mix(in srgb, var(--ink) 35%, #fff);
+  background: color-mix(in srgb, var(--ink) 35%, var(--paper));
 }
 
 .return-rule {

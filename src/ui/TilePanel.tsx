@@ -155,10 +155,10 @@ function PenrosePanel({ state, onChange }: { state: TileState; onChange: (state:
 }
 
 export function TilePanel({ state, onChange }: { state: TileState; onChange: (state: TileState) => void }) {
-  const families = Object.keys(FAMILIES) as Family[];
+  const families: Family[] = ['triangle', 'quad', 'pentagon', 'hexagon'];
   const familyChips = (
     <Chips
-      items={[...families.map((f) => FAMILIES[f].name), HAT_LABEL, PENROSE_LABEL]}
+      items={[...families.map((f) => FAMILIES[f].name), PENROSE_LABEL, HAT_LABEL]}
       active={state.family === 'hat' ? HAT_LABEL : state.family === 'penrose' ? PENROSE_LABEL : FAMILIES[state.family].name}
       onPick={(name) => {
         if (name === HAT_LABEL) {

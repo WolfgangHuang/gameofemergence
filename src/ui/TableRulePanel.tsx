@@ -1,8 +1,8 @@
 import type { HatPattern } from '../patterns/hatPatterns';
 import { effectiveRows } from '../patterns/tableRows';
 
-/** Named after their shade on the field, in the order of the table's states. */
-const STATES = ['empty', 'dark', 'mid', 'light'];
+/** In the order of the table's states. Named after their contrast to the paper, which holds in both themes. */
+const STATES = ['empty', 'strong', 'mid', 'faint'];
 
 function State({ state, capital }: { state: number; capital?: boolean }) {
   const name = STATES[state];

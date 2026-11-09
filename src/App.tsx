@@ -6,7 +6,8 @@ import type { Pattern } from './patterns/library';
 import { flip, rotate, type Shape } from './patterns/rle';
 import type { Stats, TorusSize } from './sim/protocol';
 import { Stage, type Tool } from './stage/Stage';
-import { BrushIcon, ChevronIcon, ClearIcon, EraserIcon, HandIcon, PauseIcon, PlayIcon, SeedIcon, StampIcon, StepIcon } from './ui/icons';
+import { BrushIcon, ChevronIcon, ClearIcon, EraserIcon, HandIcon, MoonIcon, PauseIcon, PlayIcon, SeedIcon, StampIcon, StepIcon, SunIcon } from './ui/icons';
+import { useTheme } from './ui/theme';
 import { HAT_PATTERNS, type HatPattern } from './patterns/hatPatterns';
 import { HatPatternPanel, PatternPanel } from './ui/PatternPanel';
 import { RulePanel } from './ui/RulePanel';
@@ -99,6 +100,7 @@ export function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<Stage | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  const [theme, toggleTheme] = useTheme();
   /** The link this page was opened with, read once. Pasting another one reloads the page. */
   const [shared] = useState(() => parseLink(window.location.hash));
   const [linkProblems, setLinkProblems] = useState(shared?.problems ?? []);
@@ -168,6 +170,7 @@ export function App() {
   useEffect(() => stageRef.current?.setRunning(running), [running]);
   useEffect(() => stageRef.current?.setSpeed(gps), [gps]);
   useEffect(() => stageRef.current?.setFade(fadeSeconds * 1000), [fadeSeconds]);
+  useEffect(() => stageRef.current?.setTheme(theme), [theme]);
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
@@ -407,18 +410,29 @@ export function App() {
       <div className={idle ? 'chrome idle' : 'chrome'}>
         <header className="brand">Game of Emergence</header>
 
-        {onTorus && (
+        <div className="view-controls">
+          {onTorus && (
+            <button
+              className={donut ? 'view-toggle active' : 'view-toggle'}
+              aria-label={donut ? 'Flat view' : '3D donut'}
+              aria-pressed={donut}
+              title={`${donut ? 'Flat view' : '3D donut'} (D)`}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setDonutOn(!donutOn)}
+            >
+              3D
+            </button>
+          )}
           <button
-            className={donut ? 'view-toggle active' : 'view-toggle'}
-            aria-label={donut ? 'Flat view' : '3D donut'}
-            aria-pressed={donut}
-            title={`${donut ? 'Flat view' : '3D donut'} (D)`}
+            className="view-toggle"
+            aria-label={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+            title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
             onMouseDown={(e) => e.preventDefault()}
-            onClick={() => setDonutOn(!donutOn)}
+            onClick={toggleTheme}
           >
-            3D
+            {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
           </button>
-        )}
+        </div>
 
         {!donut && (
           <aside className="panel tools" aria-label="Tools">

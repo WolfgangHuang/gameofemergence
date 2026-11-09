@@ -1,13 +1,14 @@
 # Game of Emergence
 
-Conways „Game of Life“ im Browser, auf einem unbegrenzten Feld und auf vielen Kachelformen: von verformbaren Vierecken über Dreiecke, Hexagone und alle 15 bekannten Fünfeck-Typen bis zu aperiodischen Kachelungen: dem „Hat“, einer der Einstein-Kacheln, und den Rauten von Penrose. Die Oberfläche ist weiß und minimalistisch, die Berechnung läuft in Rust/WebAssembly.
+Conways „Game of Life“ im Browser, auf einem unbegrenzten Feld und auf vielen Kachelformen: von Dreiecken über verformbare Vierecke, alle 15 bekannten Fünfeck-Typen und Hexagone bis zu aperiodischen Kachelungen: den Rauten von Penrose und dem „Hat“, einer der Einstein-Kacheln. Die Oberfläche ist minimalistisch, hell oder dunkel, die Berechnung läuft in Rust/WebAssembly.
 
 ## Features
 
 - **Unbegrenztes Feld:** Es wird nur gespeichert und berechnet, wo etwas passiert. Rund 3 Milliarden Zellen pro Sekunde auf Quadraten.
 - **Torus:** Wahlweise ein Feld fester Größe, dessen Ränder sich berühren. Was hinausläuft, kommt von der anderen Seite zurück. Das gibt es für alle Kachelformen außer Einstein-Kacheln und Penrose-Rauten, die sich nicht wiederholen.
 - **3D-Donut:** Der Torus lässt sich als drehbarer Ring betrachten, auch während die Simulation läuft. Gemalt und eingestellt wird in der flachen Ansicht.
-- **Kachelformen:** Vierecke (Quadrat, Rechteck, Parallelogramm, Raute, Trapez, Drachen, Dart), Dreiecke, Hexagone, die 15 bekannten Typen konvexer Fünfecke, Einstein-Kacheln und Penrose-Rauten (P3).
+- **Kachelformen:** Dreiecke, Vierecke (Quadrat, Rechteck, Parallelogramm, Raute, Trapez, Drachen, Dart), die 15 bekannten Typen konvexer Fünfecke, Hexagone, Penrose-Rauten (P3) und Einstein-Kacheln.
+- **Dark Mode:** Folgt der Systemeinstellung. Der Schalter oben neben dem 3D-Knopf wählt von Hand, und diese Wahl bleibt gespeichert.
 - **Live verformbar:** Die Ecken einer Kachel lassen sich ziehen, auch während die Simulation läuft. Das gilt nicht für die Fünfecke, sie sind feste Beispiele ihres Typs. Die Einstein-Kacheln morphen stufenlos zwischen Comet, Turtle, Spectre-Form, Hat und Chevron.
 - **Regeln frei einstellbar:** Geburt und Überleben pro Nachbarzahl, dazu passende Vorlagen je Kachelform. Die Nachbarschaft ist wählbar, also nur über Kanten oder auch über Ecken. Auf dem Torus ist auch Geburt bei 0 Nachbarn möglich.
 - **Zeichnen:** Pinsel in 12 Größen, Radierer, Zufallsfeld mit einstellbarer Dichte.

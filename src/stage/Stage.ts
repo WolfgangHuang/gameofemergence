@@ -1,5 +1,6 @@
 import { HatScene } from '../render/HatScene';
 import { PenroseScene } from '../render/PenroseScene';
+import { PALETTES, type Theme } from '../render/palette';
 import { brushReach, Renderer } from '../render/renderer';
 import type { RangeRule } from '../patterns/rule';
 import type { Camera, Recipe } from '../share/link';
@@ -168,6 +169,11 @@ export class Stage {
 
   setFade(ms: number) {
     this.renderer.setFade(ms);
+  }
+
+  setTheme(theme: Theme) {
+    this.renderer.palette = PALETTES[theme];
+    this.needsDraw = true;
   }
 
   step() {

@@ -1,5 +1,6 @@
 import type { FrameWindow, TorusSize } from '../sim/protocol';
 import { seamOffset, type Tiling, type Vec } from '../tiles/tiles';
+import { PALETTES, type Palette } from './palette';
 
 const FULLSCREEN = /* glsl */ `#version 300 es
 void main() {
@@ -106,13 +107,12 @@ uniform bool u_hasGhost;
 uniform ivec2 u_period;     // size of a torus in cells, zero on the plane
 uniform mat2 u_worldToGrid;
 uniform float u_seam;       // seam line opacity
+uniform vec3 u_paper;
+uniform vec3 u_line;
+uniform vec3 u_ink;
+uniform vec3 u_trail;
+uniform vec3 u_ghostColour;
 out vec4 color;
-
-const vec3 PAPER = vec3(1.0);
-const vec3 LINE = vec3(0.835, 0.878, 0.925);
-const vec3 INK = vec3(0.098, 0.149, 0.212);
-const vec3 TRAIL = vec3(0.490, 0.706, 0.941);
-const vec3 GHOST = vec3(0.310, 0.576, 0.863);
 
 // Integer % is undefined for negative numbers in this version of GLSL.
 int wrap(int value, int size) {
@@ -142,24 +142,24 @@ vec3 fieldColor(vec2 lattice, vec2 fromSeam, float scale) {
   float live = inside ? texelFetch(u_frame, t, 0).r : 0.0;
   float glow = inside ? texelFetch(u_glow, t, 0).r : 0.0;
 
-  vec3 c = PAPER;
-  c = mix(c, LINE, grid * (1.0 - smoothstep(0.0, 1.0, dist)));
-  c = mix(c, TRAIL, 0.5 * glow * glow);
+  vec3 c = u_paper;
+  c = mix(c, u_line, grid * (1.0 - smoothstep(0.0, 1.0, dist)));
+  c = mix(c, u_trail, 0.5 * glow * glow);
   if (u_brush >= 0.0) {
     ivec2 apart = wrapped(cell - u_hover);
     // The nearest copy of the brush centre counts.
     if (u_period.x > 0) apart -= u_period * ivec2(greaterThan(2 * apart, u_period));
     vec2 d = u_gridToWorld * vec2(apart);
-    if (dot(d, d) <= u_brush) c = mix(c, TRAIL, 0.3);
+    if (dot(d, d) <= u_brush) c = mix(c, u_trail, 0.3);
   }
   // Coverage below one cell per texel still has to read as something being there.
   // Outlines stay faintly visible through live cells, which separates them and
   // hides the stair steps of slanted edges.
-  c = mix(c, INK, sqrt(live) * (1.0 - 0.35 * grid * (1.0 - smoothstep(0.0, 1.0, dist))));
+  c = mix(c, u_ink, sqrt(live) * (1.0 - 0.35 * grid * (1.0 - smoothstep(0.0, 1.0, dist))));
   if (u_hasGhost) {
     ivec2 g = wrapped(cell - u_ghostAt);
     if (all(greaterThanEqual(g, ivec2(0))) && all(lessThan(g, textureSize(u_ghost, 0)))) {
-      c = mix(c, GHOST, 0.85 * texelFetch(u_ghost, g, 0).r);
+      c = mix(c, u_ghostColour, 0.85 * texelFetch(u_ghost, g, 0).r);
     }
   }
   if (u_seam > 0.0) {
@@ -167,7 +167,7 @@ vec3 fieldColor(vec2 lattice, vec2 fromSeam, float scale) {
     // Grid units to device pixels, measured across each family of lines.
     vec2 perUnit = vec2(length(vec2(u_worldToGrid[0][0], u_worldToGrid[1][0])), length(vec2(u_worldToGrid[0][1], u_worldToGrid[1][1])));
     vec2 away = abs(off) * scale / perUnit;
-    c = mix(c, GHOST, u_seam * (1.0 - smoothstep(0.5, 1.5, min(away.x, away.y))));
+    c = mix(c, u_ghostColour, u_seam * (1.0 - smoothstep(0.5, 1.5, min(away.x, away.y))));
   }
   return c;
 }`;
@@ -223,6 +223,7 @@ uniform vec2 u_seamShift;   // grid position of the seam
 uniform mat2 u_gridToLattice;
 uniform vec3 u_eye;
 uniform vec3 u_light;
+uniform float u_rim;
 
 void main() {
   // Seen from outside, the ring runs to the right and the tube upwards. The field's
@@ -236,7 +237,7 @@ void main() {
   vec3 normal = normalize(v_normal);
   float facing = max(dot(normal, normalize(u_eye - v_position)), 0.0);
   float rim = pow(1.0 - facing, 3.0);
-  color = vec4(c * (0.8 + 0.2 * max(dot(normal, u_light), 0.0)) - 0.1 * rim, 1.0);
+  color = vec4(c * (0.8 + 0.2 * max(dot(normal, u_light), 0.0)) + u_rim * rim, 1.0);
 }`;
 
 function compile(gl: WebGL2RenderingContext, vertex: string, fragment: string) {
@@ -305,6 +306,7 @@ function multiply(a: Mat4, b: Mat4): Mat4 {
 export class Renderer {
   readonly gl: WebGL2RenderingContext;
   readonly emptyVao: WebGLVertexArrayObject;
+  palette: Palette = PALETTES.light;
   private display;
   private donut;
   private glow;
@@ -471,6 +473,22 @@ export class Renderer {
     }
   }
 
+  /** A program simply ignores the colours it does not use. */
+  bindPalette(program: { uniform(name: string): WebGLUniformLocation | null }) {
+    const { gl, palette } = this;
+    gl.uniform3fv(program.uniform('u_paper'), palette.paper);
+    gl.uniform3fv(program.uniform('u_line'), palette.line);
+    gl.uniform3fv(program.uniform('u_ink'), palette.ink);
+    gl.uniform3fv(program.uniform('u_trail'), palette.trail);
+    gl.uniform3fv(program.uniform('u_ghostColour'), palette.ghost);
+    gl.uniform1f(program.uniform('u_rim'), palette.rim);
+  }
+
+  clearToPaper() {
+    const { gl, palette } = this;
+    gl.clearColor(palette.paper[0], palette.paper[1], palette.paper[2], 1);
+  }
+
   bindCellTextures(program: { uniform(name: string): WebGLUniformLocation | null }) {
     const { gl } = this;
     gl.activeTexture(gl.TEXTURE0);
@@ -499,6 +517,7 @@ export class Renderer {
       gl.bindTexture(gl.TEXTURE_2D, layer.texture);
       gl.uniform1i(program.uniform(name), i);
     });
+    this.bindPalette(program);
     const { hover, ghostAt, torus } = options;
     gl.uniform2i(program.uniform('u_base'), options.base[0], options.base[1]);
     gl.uniform2i(program.uniform('u_g1'), tiling.g1[0], tiling.g1[1]);
@@ -594,7 +613,7 @@ export class Renderer {
     const determinant = g1[0] * g2[1] - g1[1] * g2[0];
     gl.bindVertexArray(this.emptyVao);
     gl.viewport(0, 0, canvas.width, canvas.height);
-    gl.clearColor(1, 1, 1, 1);
+    this.clearToPaper();
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.enable(gl.DEPTH_TEST);
     gl.useProgram(program.program);

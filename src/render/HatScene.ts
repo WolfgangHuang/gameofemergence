@@ -57,25 +57,25 @@ precision highp float;
 flat in float v_live;
 flat in float v_glow;
 flat in float v_hovered;
+uniform vec3 u_paper;
+uniform vec3 u_ink;
+uniform vec3 u_trail;
 out vec4 color;
-const vec3 PAPER = vec3(1.0);
-const vec3 INK = vec3(0.098, 0.149, 0.212);
-const vec3 TRAIL = vec3(0.490, 0.706, 0.941);
 void main() {
-  vec3 c = mix(PAPER, TRAIL, 0.5 * v_glow * v_glow);
-  c = mix(c, TRAIL, 0.3 * v_hovered);
-  color = vec4(mix(c, INK, v_live), 1.0);
+  vec3 c = mix(u_paper, u_trail, 0.5 * v_glow * v_glow);
+  c = mix(c, u_trail, 0.3 * v_hovered);
+  color = vec4(mix(c, u_ink, v_live), 1.0);
 }`;
 
 export const CELL_LINE = /* glsl */ `#version 300 es
 precision highp float;
 flat in float v_live;
 uniform float u_grid;
+uniform vec3 u_line;
 out vec4 color;
-const vec3 LINE = vec3(0.835, 0.878, 0.925);
 void main() {
   // Fainter over live cells, where a full line would break them apart.
-  color = vec4(LINE, u_grid * (v_live > 0.5 ? 0.35 : 1.0));
+  color = vec4(u_line, u_grid * (v_live > 0.5 ? 0.35 : 1.0));
 }`;
 
 const hex = (q: number, r: number): Vec => [q + 0.5 * r, HR3 * r];
@@ -272,7 +272,7 @@ export class HatScene extends GraphScene {
     const canvas = gl.canvas as HTMLCanvasElement;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, canvas.width, canvas.height);
-    gl.clearColor(1, 1, 1, 1);
+    renderer.clearToPaper();
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     const orientations: number[] = [];
@@ -318,6 +318,7 @@ export class HatScene extends GraphScene {
         const [hx, hy] = this.centerOf(hover.id);
         gl.uniform2f(program.uniform('u_hoverAt'), hx - cameraWorld[0], hy - cameraWorld[1]);
       }
+      renderer.bindPalette(program);
       renderer.bindCellTextures(program);
       gl.bindBuffer(gl.ARRAY_BUFFER, this.instances);
       for (const batch of visible) {

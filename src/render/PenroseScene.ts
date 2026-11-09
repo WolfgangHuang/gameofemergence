@@ -147,7 +147,7 @@ export class PenroseScene extends GraphScene {
     const canvas = gl.canvas as HTMLCanvasElement;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, canvas.width, canvas.height);
-    gl.clearColor(1, 1, 1, 1);
+    renderer.clearToPaper();
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     const turns: number[] = [];
@@ -188,6 +188,7 @@ export class PenroseScene extends GraphScene {
         const [hx, hy] = this.centerOf(hover.id);
         gl.uniform2f(program.uniform('u_hoverAt'), hx - cameraWorld[0], hy - cameraWorld[1]);
       }
+      renderer.bindPalette(program);
       renderer.bindCellTextures(program);
       gl.bindBuffer(gl.ARRAY_BUFFER, this.instances);
       for (const batch of visible) {
