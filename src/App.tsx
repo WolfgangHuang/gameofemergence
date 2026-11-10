@@ -561,6 +561,11 @@ export function App() {
         </footer>
 
         <p className={empty && tool !== 'stamp' && !donut ? 'hint' : 'hint gone'}>Draw on the field, press S for a random start, or pick a pattern.</p>
+
+        <nav className="legal" aria-label="Legal">
+          <a href="https://www.virtuousvector.de" target="_blank" rel="noopener">Impressum</a>
+          <a href="https://www.virtuousvector.de" target="_blank" rel="noopener">Datenschutz</a>
+        </nav>
       </div>
 
       {/* Outside the chrome, which fades while the simulation runs. */}
